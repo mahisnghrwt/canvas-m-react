@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useReducer } from 'react';
 import { Utility, PathSnapPoint } from './util.js';
-import { Graph } from './graph.js';
+import { Node, Path } from './graph.js';
 
 const reducer = (state, action) => {
 	switch(action.type) {
@@ -46,16 +46,23 @@ const reducer = (state, action) => {
 }
 
 const CanvasM = props => {
+	const IDCOUNTER = useRef(0);
+
 	const canvasDimensions = {height: 720, width: 1280};
 	const grid = { x: 31, y: 20 };
 	const nodeDimensions = { x: canvasDimensions.width / grid.x, y: canvasDimensions.height / grid.y };
+
 	const isDraggingNode = useRef(false);
 	const dragNode = useRef(-1);
 	const isDrawingPath = useRef(false);
-	const idCounter = useRef(0);
 	const pathId = useRef(-1);
 
 	const [svgContent, dispatch] = useReducer(reducer, {
+		nodes: {},
+		paths: {}
+	})
+
+	const graph = useRef({
 		nodes: {},
 		paths: {}
 	})
@@ -80,6 +87,7 @@ const CanvasM = props => {
 
 			// in case was dragging a node
 			if (isDraggingNode.current) {
+				updateAllNodePaths(e.target);
 				isDraggingNode.current = false;
 				dragNode.current = -1;
 				return;
@@ -88,6 +96,10 @@ const CanvasM = props => {
 			// create a new node
 			const pos = getGridBasedPos({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
 			const node = createNewNode(pos);
+
+			// add new node to the graph
+			useGraph.addNode(node.id);
+
 			dispatch({type: 'addNewNode', node});
 		}
 	}
@@ -128,15 +140,19 @@ const CanvasM = props => {
 				// -- update the endpoint of path, in the d object
 				dObj.taill.x = endPoint.x;
 				dObj.taill.y = endPoint.y;
+
+				useGraph.addPathToNode(e.target.getAttribute("id"), pathId.current);
+
 				// convert d back to string
 				// -- parse back to string and update the svgContent state
-
 				dispatch({ type: 'updatePath', target: pathId.current, update: { d: parsePathDToStr(dObj) }})
 			}
 			else {
 				// get the paths as JS object
 				const path = createNewPath(e.target);
 				pathId.current = path.id;
+
+				useGraph.addPathToNode(e.target.getAttribute("id"), path.id);
 				// add path to the svgContent state
 				dispatch({ type: 'addNewPath', path})
 			}
@@ -148,7 +164,7 @@ const CanvasM = props => {
 	// ### SOME USEFUL FUNCTIONS
 
 	const createNewNode = (coordinates) => {
-		const id = idCounter.current++;
+		const id = IDCOUNTER.current++;
 	
 		return {
 			className: "rect",
@@ -165,7 +181,7 @@ const CanvasM = props => {
 
 	const createNewPath = (node) => {
 		const coord = calcPathSnapPoint(node, PathSnapPoint.RIGHT);
-		const id = idCounter.current++;
+		const id = IDCOUNTER.current++;
 		var d = `M${coord.x} ${coord.y} C${coord.x} ${coord.y} ${coord.x} ${coord.y} ${coord.x} ${coord.y}`;
 		return {
 			d: d,
@@ -267,10 +283,119 @@ const CanvasM = props => {
 	
 		return obj;
 	}
+
+	function updatePathD(d, update) {
+		return {
+			...d,
+			...update
+		}
+	}
 	
 	function parsePathDToStr(d) {
 		return `M${d.head.x} ${d.head.y} C${d.c1.x} ${d.c1.y} ${d.c2.x} ${d.c2.y} ${d.taill.x} ${d.taill.y}`;
 	}
+
+	function updateAllNodePaths(node) {
+		// get the id of target node
+		const id = node.getAttribute("id");
+		const nodeWidth = svgContent.nodes[id].width;
+	
+		// returns {id: nodeId, paths: { [pathId]: 1}}
+		// -- we are already storing the information in the JSObj, soo, we dont necessarily need another class to store this information, :P kill this source of redundancy
+		// -- instead store the information in the stateonly
+		// -- that means, new paths obj need to be appended to the node object in the state
+		// -- but create "reducer" like functions for help!
+		const nodeInfo = useGraph.getNodeInfo(id);
+		if (nodeInfo == null || nodeInfo == undefined) return;
+	
+		// where to latch the path on this node
+		// -- can we rename this to something better??
+		const leftSnapPoint = calcPathSnapPoint(node, PathSnapPoint.LEFT);
+		const rightSnapPoint = calcPathSnapPoint(node, PathSnapPoint.RIGHT);
+	
+		// for every single path latched to this node
+		for (const pathId of nodeInfo.paths) {
+			// returns path obj, {id: number, origin: number, end: number}
+			// -- maybeee, retain the "Path" class
+			// -- store the "path" objects in the "state.paths", but this would cause bunch of unnecessary nested objects inside the "path" dom element
+			const pathInfo = useGraph.getPathInfo(pathId);
+	
+			// get the path element from the dom
+			// -- instead update the state
+			// const path = document.getElementById(pathId);
+	
+			// parse the path.d string to obj
+			const pathD = parsePathD(svgContent.paths[pathId].d);
+			var updatedPath = null;
+	
+			// if the current node is the origin of path
+			//    then we latch the path to the right side of the node
+			// else
+			//      latch to the left side of the node
+			if (pathInfo.origin == id) {
+				// -- appropriately rename this 'calcControlPoints' function
+				updatedPath = calcControlPoints(rightSnapPoint, pathD.taill, nodeWidth);
+			}
+			else {
+				updatedPath = calcControlPoints(pathD.head, leftSnapPoint, nodeWidth);
+			}
+
+			// update the "d" attribuite of the Path
+			// -- update the "d" property of path in state
+			dispatch({ type: "updatePath", target: pathId, update: { d: parsePathDToStr(updatedPath) }});
+			// path.setAttribute("d", parsePathDToStr(updatedPath));
+		}
+	}
+
+	function calcControlPoints(head, tail, nodeWidth) {
+		const c1 = {
+			x: head.x + (nodeWidth * 2),
+			y: head.y
+		}
+		const c2 = {
+			x: tail.x - (nodeWidth * 2),
+			y: tail.y
+		}
+		return {
+			head,
+			c1,
+			c2,
+			taill: tail
+		}
+	}
+
+	const useGraph = {
+		addNode: id => {
+			graph.current.nodes[id] = new Node(id, null);
+		},
+		addPathToNode: (nodeId, pathId) => {
+			// add new connection to current node
+			if (graph.current.nodes[nodeId] == null || graph.current.nodes[nodeId] == undefined) {
+				useGraph.addNode(nodeId);
+			}
+			// let the node know of new path
+			graph.current.nodes[nodeId].paths.add(pathId);
+			useGraph.addNodeToPath(pathId, nodeId);
+		},
+		getNodeInfo: id => {
+			return graph.current.nodes[id];
+		},
+		addNodeToPath: (pathId, nodeId) => {
+			// if the path is new or the origin is missing then assign the endpoint as origin
+			if (graph.current.paths[pathId] == null || graph.current.paths[pathId] == undefined) {
+				graph.current.paths[pathId] = new Path(pathId, null, null);
+			}
+
+			if (graph.current.paths[pathId].addNode(nodeId) === false) {
+				// do something
+				console.log(graph.current.paths[pathId]);
+				throw new Error("no free end for this path!");
+			}
+		},
+		getPathInfo: id => {
+			return graph.current.paths[id];
+		}
+	};
 
 	return (
 		<svg id="main-canvas" {...canvasDimensions} onMouseMove={mainCanvasMouseMoveH} onMouseDown={mainCanvasMouseDownH} onMouseUp={mainCanvasMouseUpH} onContextMenu={e => e.preventDefault()}>

@@ -1,37 +1,31 @@
-import { GraphPath } from './graphPath.js';
-import { copy } from './util.js';
-
 class Node {
     constructor(id, paths) {
         this.id = id;
         this.paths = paths;
         if (this.paths == null)
-            this.paths = {};
+            this.paths = new Set();
     }
 }
 
-class Graph {
-    static graph = {};
-    static addNode(nodeId) {
-        this.graph[nodeId] = new Node(nodeId, null);
+class Path {
+    constructor(id, origin, end) {
+        this.id = id;
+        this.origin = origin;
+        this.end = end;
     }
-
-    static addPathToNode(nodeId, pathId) {
-        // add new connection to current node
-        if (this.graph[nodeId] == null || this.graph[nodeId] == undefined) {
-            this.addNode(nodeId);
+    
+    addNode(node) {
+        if (this.origin == null) {
+            this.origin = node;
+            return true;
+        }
+        else if (this.end == null) {
+            this.end = node;
+            return true;
         }
 
-        this.graph[nodeId].paths[pathId] = 1;
-        GraphPath.addNewPath(pathId, nodeId);
-
-        // register the path of current node using addNewPath function.
-
-    }
-
-    static getNodeInfo(nodeId) {
-        return this.graph[nodeId];
+        return false;
     }
 }
 
-export { Graph };
+export { Node, Path };

@@ -10,5 +10,10 @@
 
 path {
   stroke: #ecf0f1;
-  stroke-width: 5px;
+  stroke-width: 2px;
+}
+
+/* For Debugging Only */
+path:hover {
+  stroke: #f1c40f;
 }
