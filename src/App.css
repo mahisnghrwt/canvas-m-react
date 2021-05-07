@@ -1,3 +1,8 @@
+* {
+  font-family: 'Roboto', sans-serif;
+  font-size: 0.75rem;
+}
+
 .main-canvas {
   border: 2px solid #95a5a6;
   background-color: #2c3e50;
@@ -6,7 +11,6 @@
 .rect {
   stroke: #e74c3c;
   stroke-width: 2px;
-  padding: 0.5rem 0;
 }
 
 path {
@@ -24,10 +28,17 @@ line {
   stroke-width: 1px;
 }
 
+
 .canvas-wrapper {
   overflow: scroll;
   display: flex;
+  flex-direction: column;
+}
+
+.canvas-wrapper-item {
+  display: flex;
   flex-direction: row;
+  overflow: visible;
 }
 
 .gridLabels { 
@@ -41,5 +52,11 @@ line {
 }
 
 .row-label {
-  
+  width: 40px;
+}
+
+.col-labels {
+  display: flex;
+  flex-direction: row;
+  overflow: visible;
 }
