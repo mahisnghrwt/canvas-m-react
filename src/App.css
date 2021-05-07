@@ -1,11 +1,12 @@
-#main-canvas {
-  border: 5px solid grey;
+.main-canvas {
+  border: 2px solid #95a5a6;
   background-color: #2c3e50;
 }
 
 .rect {
   stroke: #e74c3c;
   stroke-width: 2px;
+  padding: 0.5rem 0;
 }
 
 path {
@@ -16,4 +17,29 @@ path {
 /* For Debugging Only */
 path:hover {
   stroke: #f1c40f;
+}
+
+line {
+  stroke: #95a5a6;
+  stroke-width: 1px;
+}
+
+.canvas-wrapper {
+  overflow: scroll;
+  display: flex;
+  flex-direction: row;
+}
+
+.gridLabels { 
+  font: italic 13px sans-serif;
+  fill: white;
+}
+
+.row-labels {
+  display: flex;
+  flex-direction: column;
+}
+
+.row-label {
+  
 }

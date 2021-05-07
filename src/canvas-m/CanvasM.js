@@ -45,17 +45,30 @@ const reducer = (state, action) => {
 	}
 }
 
+const gridlinesReducer = (state, action) => {
+	switch(action.type) {
+		case 'addGridlines':
+			return {
+				...action.gridlines
+			}
+		default:
+			throw new Error(`Unknown action type: ${action.type} for gridlineReducer!`);
+	}
+}
+
 const CanvasM = props => {
 	const IDCOUNTER = useRef(0);
 
 	const canvasDimensions = {height: 720, width: 1280};
 	const grid = { x: 31, y: 20 };
-	const nodeDimensions = { x: canvasDimensions.width / grid.x, y: canvasDimensions.height / grid.y };
+	const nodeDimensions = { x: canvasDimensions.width / grid.x, y: (canvasDimensions.height / grid.y)};
 
 	const isDraggingNode = useRef(false);
 	const dragNode = useRef(-1);
 	const isDrawingPath = useRef(false);
 	const pathId = useRef(-1);
+
+	const gridLabels = useRef([]);
 
 	const [svgContent, dispatch] = useReducer(reducer, {
 		nodes: {},
@@ -66,6 +79,15 @@ const CanvasM = props => {
 		nodes: {},
 		paths: {}
 	})
+
+	const [gridlines, dispatchForGridlines] = useReducer(gridlinesReducer, {
+		horizontal: [],
+		vertical: []
+	})
+
+	useEffect(() => {
+		drawGridlines();
+	}, [])
 
 	const mainCanvasMouseMoveH = e => {
 		if (isDraggingNode.current === true) {
@@ -261,34 +283,31 @@ const CanvasM = props => {
 
 	// PARSING FUNCTIONS
 	function parsePathD(d) {
-		const obj = {head: {}, c1: {}, c2: {}, taill: {}};
-	
 		// parse d to string
 		// split on space
 		const tokenized = String(d).split(" ");
-	
 		// we get 8 elements inside the "tokenized" array
 		// substring element at index 0 and 2
-		obj.head.x = parseInt(tokenized[0].substr(1));
-		obj.head.y = parseInt(tokenized[1]);
-	
-		obj.c1.x = parseInt(tokenized[2].substr(1));
-		obj.c1.y = parseInt(tokenized[3]);
-	
-		obj.c2.x = parseInt(tokenized[4]);
-		obj.c2.y = parseInt(tokenized[5]);
-	
-		obj.taill.x = parseInt(tokenized[6]);
-		obj.taill.y = parseInt(tokenized[7]);
+		const obj = {
+			head: {
+				x: parseInt(tokenized[0].substr(1)),
+				y: parseInt(tokenized[1])
+			},
+			c1: {
+				x: parseInt(tokenized[2].substr(1)),
+				y: parseInt(tokenized[3])
+			},
+			c2: {
+				x: parseInt(tokenized[4]),
+				y: parseInt(tokenized[5])
+			},
+			taill: {
+				x: parseInt(tokenized[6]),
+				y: parseInt(tokenized[7])		
+			}
+		};
 	
 		return obj;
-	}
-
-	function updatePathD(d, update) {
-		return {
-			...d,
-			...update
-		}
 	}
 	
 	function parsePathDToStr(d) {
@@ -397,11 +416,45 @@ const CanvasM = props => {
 		}
 	};
 
+	const drawGridlines = () => {
+		var gridlinesM = { horizontal: [], vertical: [] };
+
+		for (var i = 0; i < grid.y; i++) {
+			const y = (i / grid.y) * canvasDimensions.height;
+			gridlinesM.horizontal.push({id: "gridline", x1: 0, y1: y, x2: canvasDimensions.width, y2: y});
+		}
+		for (var i = 0; i < grid.x; i++) {
+			const x = (i / grid.x) * canvasDimensions.width;
+			gridlinesM.vertical.push({id: "gridline", x1: x, y1: 0, x2: x, y2: canvasDimensions.height});
+		}
+
+		for (var i = 0; i < grid.y; i++) {
+			const y = (i / grid.y) * canvasDimensions.height;
+			const x = 0;
+			gridLabels.current.push(<div className="row-label" style={{height: nodeDimensions.y, position: "relative", top: nodeDimensions.y / 2}}>{`Row ${i}`}</div>)
+		}
+
+		dispatchForGridlines({ type: 'addGridlines', gridlines: gridlinesM})
+	}
+
 	return (
-		<svg id="main-canvas" {...canvasDimensions} onMouseMove={mainCanvasMouseMoveH} onMouseDown={mainCanvasMouseDownH} onMouseUp={mainCanvasMouseUpH} onContextMenu={e => e.preventDefault()}>
-			{ svgContent && Object.values(svgContent.nodes).map(x => <rect key={x.id} {...x} />) }
-			{ svgContent && Object.values(svgContent.paths).map(x => <path key={x.id} {...x} />) }
-		</svg>
+		<>
+			<div>
+				<button onClick={null}>+</button>
+				<button onClick={null}>-</button>
+			</div>
+			<div className="canvas-wrapper" style={{height: "480px"}}>	
+				<div className="row-labels" style={{height: canvasDimensions.height}}>
+					{gridLabels.current.map(x => x)}
+				</div>
+				<svg id="main-canvas" className="main-canvas" {...canvasDimensions} x={nodeDimensions.x} y={nodeDimensions.y} onMouseMove={mainCanvasMouseMoveH} onMouseDown={mainCanvasMouseDownH} onMouseUp={mainCanvasMouseUpH} onContextMenu={e => e.preventDefault()}>
+					{ gridlines && gridlines.horizontal.map(x => <line {...x}></line>) }
+					{ gridlines && gridlines.vertical.map(x => <line {...x}></line>) }
+					{ svgContent && Object.values(svgContent.nodes).map(x => <rect key={x.id} {...x} />) }
+					{ svgContent && Object.values(svgContent.paths).map(x => <path key={x.id} {...x} />) }
+				</svg>
+			</div>
+		</>
 	)
 };
 
