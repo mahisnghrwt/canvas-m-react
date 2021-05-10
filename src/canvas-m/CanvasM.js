@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useReducer, useState } from 'react';
 import { Utility, PathSnapPoint } from './util.js';
 import { Node, Path } from './graph.js';
+import Helper from './helper.js'
 
 const reducer = (state, action) => {
 	switch(action.type) {
@@ -56,10 +57,17 @@ const gridlinesReducer = (state, action) => {
 	}
 }
 
+const Scale = {
+	WEEK: "week",
+	MONTH: "month",
+	QUARTER: "quarter"
+}
+
+
 const CanvasM = props => {
 	const IDCOUNTER = useRef(0);
 
-	const nodeDimensions = { x: 40, y: 25};
+	const nodeDimensions = { x: 20, y: 25};
 	const grid = useRef({ x: 200, y: 1 });
 	// calculate the dimensions of the canvas based on the number of rows and columns and the node dimensions
 	const [canvasDimensions, setCanvasDimensions] = useState({height: nodeDimensions.y * grid.current.y, width: nodeDimensions.x * grid.current.x});
@@ -88,43 +96,35 @@ const CanvasM = props => {
 	})
 
 	useEffect(() => {
-		// updateGridSize(1);
+		updateGridSize(1);
 	}, [])
 
+	// CANVAS EVENT FUNCTIONS
 
 	const mainCanvasMouseMoveH = e => {
 		if (isDraggingNode.current === true) {
-			// document.style.cursor = "move";
-			const pos = getGridBasedPos({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
-			dispatch({type: 'updateNode', target: dragNode.current, update: {x: pos.x, y: pos.y}});
+			dragNode_(e);
 		}
 		else if (isDrawingPath.current === true) {
-			const d = svgContent.paths[pathId.current].d;
-			const newD = calcPathD(d, { x: e.nativeEvent.offsetX - 5, y: e.nativeEvent.offsetY - 5} );
-			dispatch({type: 'updatePath', target: pathId.current, update: {d: newD}})
+			drawPath(e);
 		}
 	}
 
 	const mainCanvasMouseUpH = e => {
-		if (e.button === 0) {
-			// if in middle of drawing path, then dont trigger events for left mouse button
-			if (isDrawingPath.current) return
+		// if in middle of drawing path, then dont trigger events for left mouse button
+		if (e.button === 0 && isDrawingPath.current === false) {
 
 			// in case was dragging a node
 			if (isDraggingNode.current) {
-				updateAllNodePaths(e.target);
-				isDraggingNode.current = false;
-				dragNode.current = -1;
+				endDragNode(e);
 				return;
 			}
 
 			// create a new node
 			const pos = getGridBasedPos({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
 			const node = createNewNode(pos);
-
 			// add new node to the graph
 			useGraph.addNode(node.id);
-
 			dispatch({type: 'addNewNode', node});
 		}
 	}
@@ -135,12 +135,8 @@ const CanvasM = props => {
 			return;	
 
 		// starting to drag the node
-		if (e.button === 0) {
-			// if drawing paht, then cant drag a node at the same time
-			if (isDrawingPath.current) return
-
-			dragNode.current = e.target.getAttribute("id");
-			isDraggingNode.current = true;
+		if (e.button === 0 && isDrawingPath.current === false) {
+			startDargNode(e);
 			return;
 		}
 
@@ -148,43 +144,87 @@ const CanvasM = props => {
 		if (e.button === 2) {
 			e.preventDefault();
 			if (isDrawingPath.current) {
-				// means the path is ending over this node
-				// snap to the desired position
-				// -- get the path object from svgContent state
-				console.log("path id", pathId.current);
-				// -- get its d attribute
-				const d = svgContent.paths[pathId.current].d;
-				// parse string d to obj
-				const dObj = parsePathD(d);
-				// get the snapped endpoint
-				var endPoint = calcPathSnapPoint(e.target, PathSnapPoint.LEFT)
-				// -- this needs to be fixed
-				// -- Graph.addPathToNode(e.target.getAttribute("id"), pathId);
-
-				// -- console.log(Graph.graph);
-				// -- update the endpoint of path, in the d object
-				dObj.taill.x = endPoint.x;
-				dObj.taill.y = endPoint.y;
-
-				useGraph.addPathToNode(e.target.getAttribute("id"), pathId.current);
-
-				// convert d back to string
-				// -- parse back to string and update the svgContent state
-				dispatch({ type: 'updatePath', target: pathId.current, update: { d: parsePathDToStr(dObj) }})
+				endPath(e);
 			}
 			else {
-				// get the paths as JS object
-				const path = createNewPath(e.target);
-				pathId.current = path.id;
-
-				useGraph.addPathToNode(e.target.getAttribute("id"), path.id);
-				// add path to the svgContent state
-				dispatch({ type: 'addNewPath', path})
+				startPath(e);
 			}
 
 			isDrawingPath.current = !isDrawingPath.current;
 		}
 	}
+
+	// PATH EVENT FUNCTIONS
+
+	const startPath = mouseEvent => {
+		// get the paths as JS object
+		const path = createNewPath(mouseEvent.target);
+		pathId.current = path.id;
+
+		useGraph.addPathToNode(mouseEvent.target.getAttribute("id"), path.id);
+		// add path to the svgContent state
+		dispatch({ type: 'addNewPath', path})
+	}
+
+	const drawPath = mouseEvent => {
+		if (isDrawingPath.current === false)
+			return;
+		const d = svgContent.paths[pathId.current].d;
+		const newD = Helper.path.compute(d, { x: mouseEvent.nativeEvent.offsetX - 5, y: mouseEvent.nativeEvent.offsetY - 5}, nodeDimensions );
+		dispatch({type: 'updatePath', target: pathId.current, update: {d: newD}})
+	}
+
+	const endPath = (mouseEvent) => {
+		// means the path is ending over this node
+		// snap to the desired position
+		// -- get the path object from svgContent state
+		console.log("path id", pathId.current);
+		// -- get its d attribute
+		const d = svgContent.paths[pathId.current].d;
+		// parse string d to obj
+		const dObj = Helper.path.parseToObject(d);
+		// get the snapped endpoint
+		var endPoint = Helper.path.determineNodeSnapPoint(mouseEvent.target, PathSnapPoint.LEFT)
+		// -- this needs to be fixed
+		// -- Graph.addPathToNode(e.target.getAttribute("id"), pathId);
+
+		// -- console.log(Graph.graph);
+		// -- update the endpoint of path, in the d object
+		dObj.tail.x = endPoint.x;
+		dObj.tail.y = endPoint.y;
+
+		useGraph.addPathToNode(mouseEvent.target.getAttribute("id"), pathId.current);
+
+		// convert d back to string
+		// -- parse back to string and update the svgContent state
+		dispatch({ type: 'updatePath', target: pathId.current, update: { d: Helper.path.parseToString(dObj) }})
+	}
+
+	// NODE EVENT FUNCTIONS
+
+	const startDargNode = mouseEvent => {
+		dragNode.current = mouseEvent.target.getAttribute("id");
+		isDraggingNode.current = true;
+	}
+
+	const dragNode_ = mouseEvent => {
+		if (isDraggingNode.current === false)
+			return;
+
+		const pos = getGridBasedPos({ x: mouseEvent.nativeEvent.offsetX, y: mouseEvent.nativeEvent.offsetY });
+		dispatch({type: 'updateNode', target: dragNode.current, update: {x: pos.x, y: pos.y}});
+	}
+
+	const endDragNode = mouseEvent => {
+		if (isDraggingNode.current === false)
+			return;
+
+		useGraph.updateAllNodePaths(mouseEvent.target);
+		isDraggingNode.current = false;
+		dragNode.current = -1;
+	}
+
+
 
 	// ### SOME USEFUL FUNCTIONS
 
@@ -205,7 +245,7 @@ const CanvasM = props => {
 	};
 
 	const createNewPath = (node) => {
-		const coord = calcPathSnapPoint(node, PathSnapPoint.RIGHT);
+		const coord = Helper.path.determineNodeSnapPoint(node, PathSnapPoint.RIGHT);
 		const id = IDCOUNTER.current++;
 		var d = `M${coord.x} ${coord.y} C${coord.x} ${coord.y} ${coord.x} ${coord.y} ${coord.x} ${coord.y}`;
 		return {
@@ -220,57 +260,6 @@ const CanvasM = props => {
 		// Graph.addPathToNode(node.getAttribute("id"), id);
 	}
 
-	function calcPathD(d, endPos) {
-		// get the starting point first
-		const split = String(d).split(" ");
-		const startPos = {
-			x: parseInt(split[0].substr(1)),
-			y: parseInt(split[1])
-		}
-	
-		const c1 = {
-			x: startPos.x + (nodeDimensions.x * 2),
-			y: startPos.y
-		}
-	
-		const c2 = {
-			x: endPos.x - (nodeDimensions.x * 2),
-			y: endPos.y
-		}
-	
-		return `M${startPos.x} ${startPos.y} C${c1.x} ${c1.y} ${c2.x} ${c2.y} ${endPos.x} ${endPos.y}`;
-	}
-
-	function calcPathSnapPoint(node, pathSnapPoint) {
-		var tail = {x: 0, y: 0};
-		// get the x, y attribute of the node
-		const nodeX =  parseInt(node.getAttribute("x"));
-		const nodeY = parseInt(node.getAttribute("y"));
-		// We will also get the height and width of the node, since the width can be changed at runtime.
-		const nodeH = parseInt(node.getAttribute("height"));
-		const nodeW = parseInt(node.getAttribute("width"));
-	
-		if (pathSnapPoint == PathSnapPoint.RIGHT) {
-			tail.x += nodeW;
-			tail.y += nodeH / 2;
-		}
-		else if (pathSnapPoint == PathSnapPoint.LEFT) {
-			tail.y += nodeH / 2;
-		}
-		else if (pathSnapPoint == PathSnapPoint.TOP) {
-			tail.x += nodeW / 2;
-		}
-		else if (pathSnapPoint == PathSnapPoint.BOTTOM) {
-			tail.x += nodeW / 2;
-			tail.y += nodeH;
-		}
-	
-		tail.x += nodeX;
-		tail.y += nodeY;
-
-		return tail;
-	}
-
 	const getGridBasedPos = (coordinates) => {
 		var tempX = (coordinates.x / canvasDimensions.width) * grid.current.x;
 		var tempY = (coordinates.y / canvasDimensions.height) * grid.current.y;
@@ -283,109 +272,6 @@ const CanvasM = props => {
 			y: (tempY * canvasDimensions.height) / grid.current.y
 		}
 	};
-
-	// PARSING FUNCTIONS
-	function parsePathD(d) {
-		// parse d to string
-		// split on space
-		const tokenized = String(d).split(" ");
-		// we get 8 elements inside the "tokenized" array
-		// substring element at index 0 and 2
-		const obj = {
-			head: {
-				x: parseInt(tokenized[0].substr(1)),
-				y: parseInt(tokenized[1])
-			},
-			c1: {
-				x: parseInt(tokenized[2].substr(1)),
-				y: parseInt(tokenized[3])
-			},
-			c2: {
-				x: parseInt(tokenized[4]),
-				y: parseInt(tokenized[5])
-			},
-			taill: {
-				x: parseInt(tokenized[6]),
-				y: parseInt(tokenized[7])		
-			}
-		};
-	
-		return obj;
-	}
-	
-	function parsePathDToStr(d) {
-		return `M${d.head.x} ${d.head.y} C${d.c1.x} ${d.c1.y} ${d.c2.x} ${d.c2.y} ${d.taill.x} ${d.taill.y}`;
-	}
-
-	function updateAllNodePaths(node) {
-		// get the id of target node
-		const id = node.getAttribute("id");
-		const nodeWidth = svgContent.nodes[id].width;
-	
-		// returns {id: nodeId, paths: { [pathId]: 1}}
-		// -- we are already storing the information in the JSObj, soo, we dont necessarily need another class to store this information, :P kill this source of redundancy
-		// -- instead store the information in the stateonly
-		// -- that means, new paths obj need to be appended to the node object in the state
-		// -- but create "reducer" like functions for help!
-		const nodeInfo = useGraph.getNodeInfo(id);
-		if (nodeInfo == null || nodeInfo == undefined) return;
-	
-		// where to latch the path on this node
-		// -- can we rename this to something better??
-		const leftSnapPoint = calcPathSnapPoint(node, PathSnapPoint.LEFT);
-		const rightSnapPoint = calcPathSnapPoint(node, PathSnapPoint.RIGHT);
-	
-		// for every single path latched to this node
-		for (const pathId of nodeInfo.paths) {
-			// returns path obj, {id: number, origin: number, end: number}
-			// -- maybeee, retain the "Path" class
-			// -- store the "path" objects in the "state.paths", but this would cause bunch of unnecessary nested objects inside the "path" dom element
-			const pathInfo = useGraph.getPathInfo(pathId);
-	
-			// get the path element from the dom
-			// -- instead update the state
-			// const path = document.getElementById(pathId);
-	
-			// parse the path.d string to obj
-			const pathD = parsePathD(svgContent.paths[pathId].d);
-			var updatedPath = null;
-	
-			// if the current node is the origin of path
-			//    then we latch the path to the right side of the node
-			// else
-			//      latch to the left side of the node
-			if (pathInfo.origin == id) {
-				// -- appropriately rename this 'calcControlPoints' function
-				updatedPath = calcControlPoints(rightSnapPoint, pathD.taill, nodeWidth);
-			}
-			else {
-				updatedPath = calcControlPoints(pathD.head, leftSnapPoint, nodeWidth);
-			}
-
-			// update the "d" attribuite of the Path
-			// -- update the "d" property of path in state
-			dispatch({ type: "updatePath", target: pathId, update: { d: parsePathDToStr(updatedPath) }});
-			// path.setAttribute("d", parsePathDToStr(updatedPath));
-		}
-	}
-
-	function calcControlPoints(head, tail, nodeWidth) {
-		const c1 = {
-			x: head.x + (nodeWidth * 2),
-			y: head.y
-		}
-		const c2 = {
-			x: tail.x - (nodeWidth * 2),
-			y: tail.y
-		}
-		return {
-			head,
-			c1,
-			c2,
-			taill: tail
-		}
-	}
-
 
 	const useGraph = {
 		addNode: id => {
@@ -417,6 +303,59 @@ const CanvasM = props => {
 		},
 		getPathInfo: id => {
 			return graph.current.paths[id];
+		},
+		updateAllNodePaths: node => {
+			// get the id of target node
+			const id = node.getAttribute("id");
+			const nodeWidth = svgContent.nodes[id].width;
+		
+			// returns {id: nodeId, paths: { [pathId]: 1}}
+			// -- we are already storing the information in the JSObj, soo, we dont necessarily need another class to store this information, :P kill this source of redundancy
+			// -- instead store the information in the stateonly
+			// -- that means, new paths obj need to be appended to the node object in the state
+			// -- but create "reducer" like functions for help!
+			const nodeInfo = useGraph.getNodeInfo(id);
+			if (nodeInfo == null || nodeInfo == undefined) return;
+		
+			// where to latch the path on this node
+			// -- can we rename this to something better??
+			const leftSnapPoint = Helper.path.determineNodeSnapPoint(node, PathSnapPoint.LEFT);
+			const rightSnapPoint = Helper.path.determineNodeSnapPoint(node, PathSnapPoint.RIGHT);
+		
+			// for every single path latched to this node
+			for (const pathId of nodeInfo.paths) {
+				// returns path obj, {id: number, origin: number, end: number}
+				// -- maybeee, retain the "Path" class
+				// -- store the "path" objects in the "state.paths", but this would cause bunch of unnecessary nested objects inside the "path" dom element
+				const pathInfo = useGraph.getPathInfo(pathId);
+		
+				// get the path element from the dom
+				// -- instead update the state
+				// const path = document.getElementById(pathId);
+		
+				// parse the path.d string to obj
+				const pathD = Helper.path.parseToObject(svgContent.paths[pathId].d);
+				var updatedPath = null;
+		
+				// if the current node is the origin of path
+				//    then we latch the path to the right side of the node
+				// else
+				//      latch to the left side of the node
+				if (pathInfo.origin == id) {
+					// -- appropriately rename this 'calcControlPoints' function
+					// updatedPath = calcControlPoints(rightSnapPoint, pathD.tail, nodeWidth);
+					updatedPath = Helper.path.determineControlPoints({ head: rightSnapPoint, tail: pathD.tail }, nodeWidth);
+	
+				}
+				else {
+					updatedPath = Helper.path.determineControlPoints({ head: pathD.head, tail: leftSnapPoint }, nodeWidth);
+				}
+	
+				// update the "d" attribuite of the Path
+				// -- update the "d" property of path in state
+				dispatch({ type: "updatePath", target: pathId, update: { d: Helper.path.parseToString(updatedPath) }});
+				// path.setAttribute("d", parsePathDToStr(updatedPath));
+			}
 		}
 	};
 
@@ -443,7 +382,7 @@ const CanvasM = props => {
 		for (var i = 0; i < grid.current.x; i++) {
 			const x = (i * nodeDimensions.x);
 			const y = 0;
-			horizontalGridLabels.current.push(<div className="col-label" style={{height: nodeDimensions.y, width: nodeDimensions.x, position: "relative", left: nodeDimensions.x / 2, writingMode: "vertical-rl", textOrientation: "mixed"}}>{`Col ${i}`}</div>)
+			horizontalGridLabels.current.push(<div className="col-label" style={{height: nodeDimensions.y * 1.5, width: nodeDimensions.x, position: "relative", left: nodeDimensions.x / 2, writingMode: "vertical-rl", textOrientation: "mixed"}}>{`Col ${i}`}</div>)
 		}
 
 		dispatchForGridlines({ type: 'addGridlines', gridlines: gridlinesM})
@@ -463,11 +402,18 @@ const CanvasM = props => {
 	return (
 		<>
 		x: {canvasDimensions.width}, y: {canvasDimensions.height}
-			<div>
+			<div className="tools">
 				<button onClick={() => updateGridSize(1)}>+</button>
 				<button onClick={() => updateGridSize(-1)}>-</button>
+				<span>Secondary Unit: </span>
+				<button onClick={null}>Week</button>
+				<button onClick={null}>Month</button>
+				<button onClick={null}>Quarter</button>
 			</div>
 			<div className="canvas-wrapper" style={{height: "480px"}}>	
+				<div className="col-labels-high" style={{width: canvasDimensions.width}}>
+					{ horizontalGridLabels.current.map(x => x) }
+				</div>
 				<div className="col-labels" style={{width: canvasDimensions.width}}>
 					{ horizontalGridLabels.current.map(x => x) }
 				</div>

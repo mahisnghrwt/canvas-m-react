@@ -59,4 +59,18 @@ line {
   display: flex;
   flex-direction: row;
   overflow: visible;
+  position: relative;
+  left: 25px;
+}
+
+.col-labels-high {
+  display: flex;
+  flex-direction: row;
+  overflow: visible;
+  position: relative;
+  left: 25px;
+}
+
+.tools {
+  margin-bottom: 1rem;
 }
