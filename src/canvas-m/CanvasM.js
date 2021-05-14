@@ -22,7 +22,11 @@ const reducer = (state, action) => {
 					...state.nodes,
 					[action.target]: {
 						...state.nodes[action.target],
-						...action.update
+						...action.update,
+						props: {
+							...state.nodes[action.target].props,
+							...action.update.props
+						}
 					}
 				}
 			}
@@ -91,12 +95,10 @@ const gridlinesReducer = (state, action) => {
 	}
 }
 
-
-
 const CanvasM = props => {
 	const IDCOUNTER = useRef(0);
 	const startDate = useRef(new Date());
-	const halfYear = 30;
+	const halfYear = 180;
 	const unit = useRef("MONTH");
 	const [unit_, setUnit_] = useState("MONTH");
 	const nodeDimensions = useRef({ x: 20 * HORIZONTAL_SCALE[unit_].relativeNodeWidth, y: 25});
@@ -134,16 +136,9 @@ const CanvasM = props => {
 
 	// CANVAS EVENT FUNCTIONS
 
-	const mainCanvasMouseMoveH = e => {
-		if (isDraggingNode.current === true) {
-			dragNode_(e);
-		}
-		else if (isDrawingPath.current === true) {
-			drawPath(e);
-		}
-	}
 
 	const mainCanvasMouseUpH = e => {
+
 		// if in middle of drawing path, then dont trigger events for left mouse button
 		if (e.button === 0 && isDrawingPath.current === false) {
 
@@ -187,11 +182,27 @@ const CanvasM = props => {
 		}
 	}
 
+	const mainCanvasMouseMoveH = e => {
+		if (isDraggingNode.current === true) {
+			dragNode_(e);
+		}
+		else if (isDrawingPath.current === true) {
+			drawPath(e);
+		}
+	}
+
 	// PATH EVENT FUNCTIONS
 
 	const startPath = mouseEvent => {
+		cancelDragNode(dragNode.current, "Node drag cancelled, attempting to draw path!");
 		// get the paths as JS object
-		const path = createNewPath(mouseEvent.target);
+		const extractNode = () => {
+			const {props: {x, y, height, width}} = svgContent.nodes[mouseEvent.target.getAttribute("id")];
+			return {x, y, height, width};
+		}
+
+		const node = extractNode();
+		const path = createNewPath(node);
 		pathId.current = path.id;
 
 		useGraph.addPathToNode(mouseEvent.target.getAttribute("id"), path.id);
@@ -217,8 +228,16 @@ const CanvasM = props => {
 		const d = svgContent.paths[pathId.current].props.d;
 		// parse string d to obj
 		const dObj = Helper.path.parseToObject(d);
+
+		const extractNode = () => {
+			const {props: {x, y, height, width}} = svgContent.nodes[mouseEvent.target.getAttribute("id")];
+			return {x, y, height, width};
+		}
+		const node = extractNode();
+
+
 		// get the snapped endpoint
-		var endPoint = Helper.path.determineNodeSnapPoint(mouseEvent.target, PathSnapPoint.LEFT)
+		var endPoint = Helper.path.determineNodeSnapPoint_(node, PathSnapPoint.LEFT)
 		// -- this needs to be fixed
 		// -- Graph.addPathToNode(e.target.getAttribute("id"), pathId);
 
@@ -234,27 +253,45 @@ const CanvasM = props => {
 		dispatch({ type: 'updatePathProps', target: pathId.current, update: { d: Helper.path.parseToString(dObj) }})
 	}
 
+	const cancelDrawPath = message => {
+		isDrawingPath.current = false;
+		pathId.current = -1;
+		setInfo(() => message);
+	}
+
 	// NODE EVENT FUNCTIONS
 
 	const startDargNode = mouseEvent => {
+		cancelDrawPath("Cannot draw path, attempting to drag node!");
 		dragNode.current = mouseEvent.target.getAttribute("id");
 		isDraggingNode.current = true;
 	}
 
 	const dragNode_ = mouseEvent => {
-		if (isDraggingNode.current === false)
+		if (isDraggingNode.current === false || dragNode.current === -1)
 			return;
 
-		const pos = snapToGrid({ x: mouseEvent.nativeEvent.offsetX, y: mouseEvent.nativeEvent.offsetY });
+		const gridPos = canvasCoordToGrid({ x: mouseEvent.nativeEvent.offsetX, y: mouseEvent.nativeEvent.offsetY });
+		if (gridPos == null) {
+			cancelDragNode(dragNode.current, "Trying to drag out of canvas!");
+			useGraph.updateAllNodePaths(dragNode.current);
+			return;
+		}
+		if (gridPos.x === svgContent.nodes[dragNode.current].props.x && gridPos.y === svgContent.nodes[dragNode.current].props.y)
+			return;
+		const updatedStartDate = add(startDate.current, { days: parseInt(gridPos.x) });
+		const pos = gridCoordToCanvas(gridPos);
 		const action = {
-			type: 'updateNodeProps',
+			type: 'updateNode',
 		 	target: dragNode.current,
 			update: {
-				x: pos.x,
-				y: pos.y
+				startDate: updatedStartDate,
+				props: {
+					x: pos.x,
+					y: pos.y
+				}
 			}
 		}
-		console.log("action", action);
 		dispatch(action);
 	}
 
@@ -262,11 +299,19 @@ const CanvasM = props => {
 		if (isDraggingNode.current === false)
 			return;
 
-		useGraph.updateAllNodePaths(mouseEvent.target);
+		useGraph.updateAllNodePaths(dragNode.current);
 		isDraggingNode.current = false;
 		dragNode.current = -1;
 	}
 
+	const cancelDragNode = (id, message) => {
+		if (id !== -1)
+			useGraph.updateAllNodePaths(id);
+
+		dragNode.current = -1;
+		isDraggingNode.current = false;
+		setInfo(() => message);
+	}
 
 
 	// ### SOME USEFUL FUNCTIONS
@@ -294,7 +339,7 @@ const CanvasM = props => {
 	};
 
 	const createNewPath = (node) => {
-		const coord = Helper.path.determineNodeSnapPoint(node, PathSnapPoint.RIGHT);
+		const coord = Helper.path.determineNodeSnapPoint_(node, PathSnapPoint.RIGHT);
 		const id = IDCOUNTER.current++;
 		var d = `M${coord.x} ${coord.y} C${coord.x} ${coord.y} ${coord.x} ${coord.y} ${coord.x} ${coord.y}`;
 		return {
@@ -315,10 +360,6 @@ const CanvasM = props => {
 	// COORDINATE RELATED FUNCTIONS
 
 	
-	const snapToGrid = coordinates => {
-		return gridCoordToCanvas(canvasCoordToGrid(coordinates));
-	}
-
 	const canvasCoordToGrid = coordinates => {
 		// coord represent the posittion on grid
 		const coord = {
@@ -332,6 +373,9 @@ const CanvasM = props => {
 		coord.x = parseInt(coord.x);
 		coord.y = parseInt(coord.y);
 
+		if (coord.x >= grid.current.x || coord.y >= grid.current.y)
+			return null;
+
 		return coord;
 	}
 
@@ -340,10 +384,6 @@ const CanvasM = props => {
 			x: coordinates.x * nodeDimensions.current.x,
 			y: coordinates.y * nodeDimensions.current.y
 		}
-		// return {
-		// 	x: (coordinates.x * canvasDimensions.width) / grid.current.x,
-		// 	y: (coordinates.y * canvasDimensions.height) / grid.current.y
-		// };
 	}
 
 	// Graph functions
@@ -379,11 +419,18 @@ const CanvasM = props => {
 		getPathInfo: id => {
 			return graph.current.paths[id];
 		},
-		updateAllNodePaths: node => {
+		updateAllNodePaths: id => {
+			if (id === -1) return;
+
 			// get the id of target node
-			const id = node.getAttribute("id");
-			console.log(id);
 			const nodeWidth = svgContent.nodes[id].props.width;
+
+			const extractNode = () => {
+				const {props: {x, y, height, width}} = svgContent.nodes[id];
+				return {x, y, height, width};
+			}
+
+			const node = extractNode(id);
 		
 			// returns {id: nodeId, paths: { [pathId]: 1}}
 			// -- we are already storing the information in the JSObj, soo, we dont necessarily need another class to store this information, :P kill this source of redundancy
@@ -395,8 +442,8 @@ const CanvasM = props => {
 		
 			// where to latch the path on this node
 			// -- can we rename this to something better??
-			const leftSnapPoint = Helper.path.determineNodeSnapPoint(node, PathSnapPoint.LEFT);
-			const rightSnapPoint = Helper.path.determineNodeSnapPoint(node, PathSnapPoint.RIGHT);
+			const leftSnapPoint = Helper.path.determineNodeSnapPoint_(node, PathSnapPoint.LEFT);
+			const rightSnapPoint = Helper.path.determineNodeSnapPoint_(node, PathSnapPoint.RIGHT);
 		
 			// for every single path latched to this node
 			for (const pathId of nodeInfo.paths) {
@@ -514,7 +561,7 @@ const CanvasM = props => {
 		// finally redraw the svgcontent
 		Object.values(data.svgContent.nodes).map(node => {
 			const updatedNode = updateSVGRectCoordinates(node, data.startDate);
-			console.log("updated", updatedNode)
+			// console.log("updated", updatedNode)
 			localSVGContent.nodes[updatedNode.id] = updatedNode;
 		});
 

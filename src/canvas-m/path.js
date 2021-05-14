@@ -107,42 +107,36 @@ const compute = (d, endPos, nodeDimensions) => {
 }
 
 const compute_ = (startNode, endNode) => {
-	const pathHead = determineNodeSnapPoint_(startNode.x, startNode.y, startNode.width, startNode.height, PathSnapPoint.RIGHT);
-	const pathTail = determineNodeSnapPoint_(endNode.x, endNode.y, endNode.width, endNode.height, PathSnapPoint.LEFT);
+	const pathHead = determineNodeSnapPoint_(startNode, PathSnapPoint.RIGHT);
+	const pathTail = determineNodeSnapPoint_(endNode, PathSnapPoint.LEFT);
 	return parseToString(determineControlPoints_(pathHead, pathTail, startNode, endNode));
 }
 
 function determineNodeSnapPoint(node, pathSnapPoint) {
 	var tail = { x: 0, y: 0 };
-	// get the x, y attribute of the node
-	const nodeX =  parseInt(node.getAttribute("x"));
-	const nodeY = parseInt(node.getAttribute("y"));
-	// We will also get the height and width of the node, since the width can be changed at runtime.
-	const nodeH = parseInt(node.getAttribute("height"));
-	const nodeW = parseInt(node.getAttribute("width"));
 
 	if (pathSnapPoint == PathSnapPoint.RIGHT) {
-		tail.x += nodeW;
-		tail.y += nodeH / 2;
+		tail.x += node.width;
+		tail.y += node.height / 2;
 	}
 	else if (pathSnapPoint == PathSnapPoint.LEFT) {
-		tail.y += nodeH / 2;
+		tail.y += node.height / 2;
 	}
 	else if (pathSnapPoint == PathSnapPoint.TOP) {
-		tail.x += nodeW / 2;
+		tail.x += node.width / 2;
 	}
 	else if (pathSnapPoint == PathSnapPoint.BOTTOM) {
-		tail.x += nodeW / 2;
-		tail.y += nodeH;
+		tail.x += node.width / 2;
+		tail.y += node.height;
 	}
 
-	tail.x += nodeX;
-	tail.y += nodeY;
+	tail.x += node.x;
+	tail.y += node.y;
 
 	return tail;
 }
 
-function determineNodeSnapPoint_(nodeX, nodeY, nodeWidth, nodeHeight, pathSnapPoint) {
+function determineNodeSnapPoint_(node, pathSnapPoint) {
 	var snapPos = { x: 0, y: 0 };
 	// // get the x, y attribute of the node
 	// const nodeX =  parseInt(node.props.x);
@@ -153,23 +147,23 @@ function determineNodeSnapPoint_(nodeX, nodeY, nodeWidth, nodeHeight, pathSnapPo
 
 	switch(pathSnapPoint) {
 		case PathSnapPoint.RIGHT:
-			snapPos.x += nodeWidth;
-			snapPos.y += nodeHeight / 2;
+			snapPos.x += node.width;
+			snapPos.y += node.height / 2;
 			break;
 		case PathSnapPoint.LEFT:
-			snapPos.y += nodeHeight / 2;
+			snapPos.y += node.height / 2;
 			break;
 		case PathSnapPoint.TOP:
-			snapPos.x += nodeWidth / 2;
+			snapPos.x += node.width / 2;
 			break;
 		case PathSnapPoint.BOTTOM:
-			snapPos.x += nodeWidth / 2;
-			snapPos.y += nodeHeight;
+			snapPos.x += node.width / 2;
+			snapPos.y += node.height;
 			break;
 	}
 
-	snapPos.x += nodeX;
-	snapPos.y += nodeY;
+	snapPos.x += node.x;
+	snapPos.y += node.y;
 
 	return snapPos;
 
@@ -200,5 +194,5 @@ export {
 	parseToString,
 	compute,
 	compute_,
-	determineNodeSnapPoint
+	determineNodeSnapPoint_
 }
