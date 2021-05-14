@@ -59,8 +59,6 @@ line {
   display: flex;
   flex-direction: row;
   overflow: visible;
-  position: relative;
-  left: 25px;
 }
 
 .col-labels-high {
@@ -71,6 +69,18 @@ line {
   left: 25px;
 }
 
+.col-label {
+  border: 1px solid grey;
+  text-align: center;
+  box-sizing: border-box;
+}
+
 .tools {
   margin-bottom: 1rem;
+}
+
+#node-path-info * {
+  border: 1px solid black;
+  width: fit-content;
+  font-size: 1rem;
 }

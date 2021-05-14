@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useReducer, useState } from 'react';
-import { Utility, PathSnapPoint } from './util.js';
+import { PathSnapPoint, baseNodeDimensions, HORIZONTAL_SCALE } from './util.js';
 import { Node, Path } from './graph.js';
 import Helper from './helper.js'
+import HorizontalScale from './HorizontalScale.js';
+import { add, differenceInDays } from 'date-fns';
 
 const reducer = (state, action) => {
 	switch(action.type) {
@@ -24,12 +26,28 @@ const reducer = (state, action) => {
 					}
 				}
 			}
+		case 'updateNodeProps':
+			return {
+				paths: state.paths,
+				nodes: {
+					...state.nodes,
+					[action.target]: {
+						...state.nodes[action.target],
+						props: {
+							...state.nodes[action.target].props,
+							...action.update
+						}
+					}
+				}
+			}
 		case 'addNewPath':
 			return {
 				nodes: state.nodes,
 				paths: {
 					...state.paths,
-					[action.path.id]: action.path
+					[action.path.id]: {
+						...action.path
+					}
 				}
 			}
 		case 'updatePath':
@@ -43,6 +61,22 @@ const reducer = (state, action) => {
 					}
 				}
 			}
+		case 'updatePathProps':
+			return {
+				nodes: state.nodes,
+				paths: {
+					...state.paths,
+					[action.target]: {
+						...state.paths[action.target],
+						props: {
+							...state.paths[action.target].props,
+							...action.update
+						}
+					}
+				}
+			}
+		case 'replace':
+			return action.replace
 	}
 }
 
@@ -57,28 +91,24 @@ const gridlinesReducer = (state, action) => {
 	}
 }
 
-const Scale = {
-	WEEK: "week",
-	MONTH: "month",
-	QUARTER: "quarter"
-}
 
 
 const CanvasM = props => {
 	const IDCOUNTER = useRef(0);
+	const startDate = useRef(new Date());
+	const halfYear = 30;
+	const unit = useRef("MONTH");
+	const [unit_, setUnit_] = useState("MONTH");
+	const nodeDimensions = useRef({ x: 20 * HORIZONTAL_SCALE[unit_].relativeNodeWidth, y: 25});
+	const grid = useRef({ x: halfYear, y: 1 });
+	const [canvasDimensions, setCanvasDimensions] = useState({height: nodeDimensions.current.y * grid.current.y, width: nodeDimensions.current.x * grid.current.x});
 
-	const nodeDimensions = { x: 20, y: 25};
-	const grid = useRef({ x: 200, y: 1 });
-	// calculate the dimensions of the canvas based on the number of rows and columns and the node dimensions
-	const [canvasDimensions, setCanvasDimensions] = useState({height: nodeDimensions.y * grid.current.y, width: nodeDimensions.x * grid.current.x});
+	const gridLabels = useRef([]);
 
 	const isDraggingNode = useRef(false);
 	const dragNode = useRef(-1);
 	const isDrawingPath = useRef(false);
 	const pathId = useRef(-1);
-
-	const gridLabels = useRef([]);
-	const horizontalGridLabels = useRef([]);
 
 	const [svgContent, dispatch] = useReducer(reducer, {
 		nodes: {},
@@ -90,10 +120,13 @@ const CanvasM = props => {
 		paths: {}
 	})
 
+
 	const [gridlines, dispatchForGridlines] = useReducer(gridlinesReducer, {
 		horizontal: [],
 		vertical: []
 	})
+
+	const [info, setInfo] = useState(null);
 
 	useEffect(() => {
 		updateGridSize(1);
@@ -121,10 +154,10 @@ const CanvasM = props => {
 			}
 
 			// create a new node
-			const pos = getGridBasedPos({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
-			const node = createNewNode(pos);
+			const node = createNewNode({x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
 			// add new node to the graph
 			useGraph.addNode(node.id);
+
 			dispatch({type: 'addNewNode', node});
 		}
 	}
@@ -169,18 +202,19 @@ const CanvasM = props => {
 	const drawPath = mouseEvent => {
 		if (isDrawingPath.current === false)
 			return;
-		const d = svgContent.paths[pathId.current].d;
-		const newD = Helper.path.compute(d, { x: mouseEvent.nativeEvent.offsetX - 5, y: mouseEvent.nativeEvent.offsetY - 5}, nodeDimensions );
-		dispatch({type: 'updatePath', target: pathId.current, update: {d: newD}})
+		const d = svgContent.paths[pathId.current].props.d;
+
+		const newD = Helper.path.compute(d, { x: mouseEvent.nativeEvent.offsetX - 5, y: mouseEvent.nativeEvent.offsetY - 5}, nodeDimensions.current );
+		dispatch({type: 'updatePathProps', target: pathId.current, update: {  d: newD }})
 	}
 
-	const endPath = (mouseEvent) => {
+	const endPath = mouseEvent => {
 		// means the path is ending over this node
 		// snap to the desired position
 		// -- get the path object from svgContent state
 		console.log("path id", pathId.current);
 		// -- get its d attribute
-		const d = svgContent.paths[pathId.current].d;
+		const d = svgContent.paths[pathId.current].props.d;
 		// parse string d to obj
 		const dObj = Helper.path.parseToObject(d);
 		// get the snapped endpoint
@@ -197,7 +231,7 @@ const CanvasM = props => {
 
 		// convert d back to string
 		// -- parse back to string and update the svgContent state
-		dispatch({ type: 'updatePath', target: pathId.current, update: { d: Helper.path.parseToString(dObj) }})
+		dispatch({ type: 'updatePathProps', target: pathId.current, update: { d: Helper.path.parseToString(dObj) }})
 	}
 
 	// NODE EVENT FUNCTIONS
@@ -211,8 +245,17 @@ const CanvasM = props => {
 		if (isDraggingNode.current === false)
 			return;
 
-		const pos = getGridBasedPos({ x: mouseEvent.nativeEvent.offsetX, y: mouseEvent.nativeEvent.offsetY });
-		dispatch({type: 'updateNode', target: dragNode.current, update: {x: pos.x, y: pos.y}});
+		const pos = snapToGrid({ x: mouseEvent.nativeEvent.offsetX, y: mouseEvent.nativeEvent.offsetY });
+		const action = {
+			type: 'updateNodeProps',
+		 	target: dragNode.current,
+			update: {
+				x: pos.x,
+				y: pos.y
+			}
+		}
+		console.log("action", action);
+		dispatch(action);
 	}
 
 	const endDragNode = mouseEvent => {
@@ -230,14 +273,20 @@ const CanvasM = props => {
 
 	const createNewNode = (coordinates) => {
 		const id = IDCOUNTER.current++;
+		const gridCoord = canvasCoordToGrid(coordinates);
+		const snappedCoord = gridCoordToCanvas(gridCoord);
 	
 		return {
-			className: "rect",
 			id: id,
-			width: nodeDimensions.x,
-			height: nodeDimensions.y,
-			x: coordinates.x,
-			y: coordinates.y
+			startDate: add(startDate.current, { days: gridCoord.x }),
+			props: {
+				className: "rect",
+				id: id,
+				width: nodeDimensions.current.x,
+				height: nodeDimensions.current.y,
+				x: snappedCoord.x,
+				y: snappedCoord.y
+			}
 		}
 
 		// Add new node to the graph
@@ -249,10 +298,13 @@ const CanvasM = props => {
 		const id = IDCOUNTER.current++;
 		var d = `M${coord.x} ${coord.y} C${coord.x} ${coord.y} ${coord.x} ${coord.y} ${coord.x} ${coord.y}`;
 		return {
-			d: d,
-			id: id,
-			key: id,
-			fill: "transparent"
+			id,
+			props: {
+				d: d,
+				id: id,
+				key: id,
+				fill: "transparent"
+			}
 		}
 			
 		// register new path
@@ -260,18 +312,41 @@ const CanvasM = props => {
 		// Graph.addPathToNode(node.getAttribute("id"), id);
 	}
 
-	const getGridBasedPos = (coordinates) => {
-		var tempX = (coordinates.x / canvasDimensions.width) * grid.current.x;
-		var tempY = (coordinates.y / canvasDimensions.height) * grid.current.y;
-	
-		tempX = parseInt(tempX);
-		tempY = parseInt(tempY);
+	// COORDINATE RELATED FUNCTIONS
 
+	
+	const snapToGrid = coordinates => {
+		return gridCoordToCanvas(canvasCoordToGrid(coordinates));
+	}
+
+	const canvasCoordToGrid = coordinates => {
+		// coord represent the posittion on grid
+		const coord = {
+			x: 0,
+			y: 0
+		};
+
+		coord.x = (coordinates.x / canvasDimensions.width) * grid.current.x;
+		coord.y = (coordinates.y / canvasDimensions.height) * grid.current.y;
+
+		coord.x = parseInt(coord.x);
+		coord.y = parseInt(coord.y);
+
+		return coord;
+	}
+
+	const gridCoordToCanvas = coordinates => {
 		return {
-			x: (tempX * canvasDimensions.width) / grid.current.x,
-			y: (tempY * canvasDimensions.height) / grid.current.y
+			x: coordinates.x * nodeDimensions.current.x,
+			y: coordinates.y * nodeDimensions.current.y
 		}
-	};
+		// return {
+		// 	x: (coordinates.x * canvasDimensions.width) / grid.current.x,
+		// 	y: (coordinates.y * canvasDimensions.height) / grid.current.y
+		// };
+	}
+
+	// Graph functions
 
 	const useGraph = {
 		addNode: id => {
@@ -307,7 +382,8 @@ const CanvasM = props => {
 		updateAllNodePaths: node => {
 			// get the id of target node
 			const id = node.getAttribute("id");
-			const nodeWidth = svgContent.nodes[id].width;
+			console.log(id);
+			const nodeWidth = svgContent.nodes[id].props.width;
 		
 			// returns {id: nodeId, paths: { [pathId]: 1}}
 			// -- we are already storing the information in the JSObj, soo, we dont necessarily need another class to store this information, :P kill this source of redundancy
@@ -334,7 +410,7 @@ const CanvasM = props => {
 				// const path = document.getElementById(pathId);
 		
 				// parse the path.d string to obj
-				const pathD = Helper.path.parseToObject(svgContent.paths[pathId].d);
+				const pathD = Helper.path.parseToObject(svgContent.paths[pathId].props.d);
 				var updatedPath = null;
 		
 				// if the current node is the origin of path
@@ -353,39 +429,38 @@ const CanvasM = props => {
 	
 				// update the "d" attribuite of the Path
 				// -- update the "d" property of path in state
-				dispatch({ type: "updatePath", target: pathId, update: { d: Helper.path.parseToString(updatedPath) }});
+				dispatch({ type: "updatePathProps", target: pathId, update: { d: Helper.path.parseToString(updatedPath) }});
 				// path.setAttribute("d", parsePathDToStr(updatedPath));
 			}
 		}
 	};
 
-	const drawGridlines = () => {
+	const drawGridlines = (nodeDimensions, grid) => {
 		var gridlinesM = { horizontal: [], vertical: [] };
 
-		for (var i = 1; i < grid.current.y; i++) {
+		for (var i = 1; i < grid.y; i++) {
 			const y = parseInt(i * nodeDimensions.y);
-			gridlinesM.horizontal.push({id: "gridline", x1: 0, y1: y, x2: (nodeDimensions.x * grid.current.x), y2: y});
+			gridlinesM.horizontal.push({id: "gridline", x1: 0, y1: y, x2: (nodeDimensions.x * grid.x), y2: y});
 		}
-		for (var i = 1; i < grid.current.x; i++) {
+		for (var i = 1; i < grid.x; i++) {
 			const x = parseInt(i * nodeDimensions.x);
-			gridlinesM.vertical.push({id: "gridline", x1: x, y1: 0, x2: x, y2: (nodeDimensions.y * grid.current.y)});
+			gridlinesM.vertical.push({id: "gridline", x1: x, y1: 0, x2: x, y2: (nodeDimensions.y * grid.y)});
 		}
 
 		gridLabels.current.splice(0, gridLabels.current.length);
-		for (var i = 0; i < grid.current.y; i++) {
+		for (var i = 0; i < grid.y; i++) {
 			const y = (i * nodeDimensions.y);
 			const x = 0;
 			gridLabels.current.push(<div className="row-label" style={{height: nodeDimensions.y, position: "relative", top: nodeDimensions.y / 2}}>{`Row ${i}`}</div>)
 		}
 
-		horizontalGridLabels.current.splice(0, horizontalGridLabels.current.length);
-		for (var i = 0; i < grid.current.x; i++) {
-			const x = (i * nodeDimensions.x);
-			const y = 0;
-			horizontalGridLabels.current.push(<div className="col-label" style={{height: nodeDimensions.y * 1.5, width: nodeDimensions.x, position: "relative", left: nodeDimensions.x / 2, writingMode: "vertical-rl", textOrientation: "mixed"}}>{`Col ${i}`}</div>)
-		}
-
 		dispatchForGridlines({ type: 'addGridlines', gridlines: gridlinesM})
+	}
+
+	const updateScale = unit => {
+
+		const data = serailize();
+		deserialize(data, unit);
 	}
 
 	const updateGridSize = updateVal => {
@@ -393,40 +468,162 @@ const CanvasM = props => {
 		setCanvasDimensions(prev => {
 			return {
 				...prev,
-				height: nodeDimensions.y * grid.current.y
+				height: nodeDimensions.current.y * grid.current.y
 			}
 		})
-		drawGridlines();
+		drawGridlines(nodeDimensions.current, grid.current);
+	}
+
+	// Serialize
+	const serailize = () => {
+		return ( 
+			{
+				svgContent,
+				graph: graph.current,
+				unit: unit_,
+				grid: grid.current,
+				IDCOUNTER: IDCOUNTER.current,
+				startDate: startDate.current
+			}
+		)
+	}
+
+	// Target unit to deserialize to.
+	const deserialize = (data, targetUnit) => {
+		var localSVGContent = {nodes: {}, paths: {}};
+		IDCOUNTER.current = data.IDCOUNTER;
+		setUnit_(() => targetUnit);
+		// unit.current = targetUnit;
+		grid.current = data.grid;
+
+		// update the node dimension according to the unit
+		nodeDimensions.current = calculateNodeDimensions(targetUnit);
+
+		// update canvas size based on the nodeDimensions and gridSize
+		// will cause rerender
+		setCanvasDimensions(() => calculateCanvasDimensions(nodeDimensions.current, data.grid));
+
+		// draw new gridlines
+		// will cause rerender
+		drawGridlines(nodeDimensions.current, data.grid);
+
+		// simply add the graph
+		graph.current = data.graph;
+
+		// update the date after node being dragged
+		// finally redraw the svgcontent
+		Object.values(data.svgContent.nodes).map(node => {
+			const updatedNode = updateSVGRectCoordinates(node, data.startDate);
+			console.log("updated", updatedNode)
+			localSVGContent.nodes[updatedNode.id] = updatedNode;
+		});
+
+		// now we have to update the path based on the current unit
+		// but refer to localSVGCOntent, because the global one is not updated yet.
+		Object.values(data.graph.paths).map(path => {
+			// path = {id, origin, end}
+			const origin = {
+				x: localSVGContent.nodes[path.origin].props.x,
+				y: localSVGContent.nodes[path.origin].props.y,
+				height: localSVGContent.nodes[path.origin].props.height,
+				width: localSVGContent.nodes[path.origin].props.width,
+			};
+			const end = {
+				x: localSVGContent.nodes[path.end].props.x,
+				y: localSVGContent.nodes[path.end].props.y,
+				height: localSVGContent.nodes[path.end].props.height,
+				width: localSVGContent.nodes[path.end].props.width,
+			};
+			const d = Helper.path.compute_(origin, end);
+			localSVGContent.paths[path.id] = {
+				...data.svgContent.paths[path.id],
+				props: {
+					...data.svgContent.paths[path.id].props,
+					d
+				}
+			};
+		})
+
+		// then finally update the svgContent reducer
+		dispatch({ type: 'replace', replace: localSVGContent });
+	}
+
+	const updateSVGRectCoordinates = (node, startDate) => {
+		const x = differenceInDays(node.startDate, startDate);
+		const updated = { ...node, props: {...node.props}};
+		// now we have the x in grid coordinates, but y is still in canvas coordinates
+		const canvasCoord = gridCoordToCanvas({x: x, y: 0});
+		updated.props.x = canvasCoord.x;
+		updated.props.width = nodeDimensions.current.x;
+		updated.props.height = nodeDimensions.current.y;
+
+		return updated;
+	}
+
+	const calculateNodeDimensions = unit => {
+		return {
+			x: baseNodeDimensions.width * HORIZONTAL_SCALE[unit].relativeNodeWidth,
+			y: baseNodeDimensions.height
+		}
+	}
+
+	const calculateCanvasDimensions = (nodeDimensions, grid) => {
+		return {
+			width: nodeDimensions.x * grid.x,
+			height: nodeDimensions.y * grid.y
+		}
+	}
+
+	const displayNodePathInfo = (type, id) => {
+		setInfo(() => {
+			return {
+				...svgContent[type][id]
+			}
+		});
 	}
 
 	return (
 		<>
+		<h3>{ unit_ }</h3>
 		x: {canvasDimensions.width}, y: {canvasDimensions.height}
 			<div className="tools">
 				<button onClick={() => updateGridSize(1)}>+</button>
 				<button onClick={() => updateGridSize(-1)}>-</button>
 				<span>Secondary Unit: </span>
-				<button onClick={null}>Week</button>
-				<button onClick={null}>Month</button>
-				<button onClick={null}>Quarter</button>
+				<button onClick={() => {updateScale("WEEK")}}>Week</button>
+				<button onClick={() => {updateScale("MONTH")}}>Month</button>
+				<button onClick={() => {updateScale("QUARTER")}}>Quarter</button>
 			</div>
 			<div className="canvas-wrapper" style={{height: "480px"}}>	
-				<div className="col-labels-high" style={{width: canvasDimensions.width}}>
-					{ horizontalGridLabels.current.map(x => x) }
-				</div>
-				<div className="col-labels" style={{width: canvasDimensions.width}}>
-					{ horizontalGridLabels.current.map(x => x) }
-				</div>
+				<HorizontalScale
+					startDate={new Date()}
+					baseUnit={unit_}
+					unit={unit_}
+					days={grid.current.x}
+					styleInherited={{position: 'relative', left: baseNodeDimensions.width * 2, width: canvasDimensions.width}}
+				/>
+				<HorizontalScale
+					startDate={new Date()}
+					baseUnit={unit_}
+					unit={HORIZONTAL_SCALE[unit_].base}
+					days={grid.current.x}
+					styleInherited={{position: 'relative', left: baseNodeDimensions.width * 2, width: canvasDimensions.width}}
+				/>
 				<div className="canvas-wrapper-item">
-					<div className="row-labels" style={{height: canvasDimensions.height}}>
+					<div className="row-labels" style={{height: canvasDimensions.height, maxWidth: baseNodeDimensions.width * 2}}>
 						{gridLabels.current.map(x => x)}
 					</div>
 					<svg id="main-canvas" style={{overflow: "visible"}} className="main-canvas" {...canvasDimensions} onMouseMove={mainCanvasMouseMoveH} onMouseDown={mainCanvasMouseDownH} onMouseUp={mainCanvasMouseUpH} onContextMenu={e => e.preventDefault()}>
 						{ gridlines && gridlines.horizontal.map(x => <line {...x}></line>) }
 						{ gridlines && gridlines.vertical.map(x => <line {...x}></line>) }
-						{ svgContent && Object.values(svgContent.nodes).map(x => <rect key={x.id} {...x} />) }
-						{ svgContent && Object.values(svgContent.paths).map(x => <path key={x.id} {...x} />) }
+						{ svgContent && Object.values(svgContent.nodes).map(x => <rect key={x.id} {...x.props} onMouseOver={() => displayNodePathInfo("nodes", x.id)} />) }
+						{ svgContent && Object.values(svgContent.paths).map(x => <path key={x.id} {...x.props} onMouseOver={() => displayNodePathInfo("paths", x.id)} />) }
 					</svg>
+				</div>
+				<div id="node-path-info">
+					<pre>
+						{info && JSON.stringify(info, null, 4)}
+					</pre>
 				</div>
 			</div>
 		</>
