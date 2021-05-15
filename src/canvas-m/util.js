@@ -35,9 +35,19 @@ const convertUnit = (x, from, to) => {
 	return (x * HORIZONTAL_SCALE[to].relativeNodeWidth) / HORIZONTAL_SCALE[from].relativeNodeWidth;
 }
 
+const parseObjectPropToInt = obj => {
+	const obj_ = {};
+	for(const prop in obj) {
+		obj_[prop] = parseInt(obj[prop]);
+	}
+
+	return obj_;
+}
+
 export {
     PathSnapPoint,
     baseNodeDimensions,
     HORIZONTAL_SCALE,
-	convertUnit
+	convertUnit,
+	parseObjectPropToInt
 }

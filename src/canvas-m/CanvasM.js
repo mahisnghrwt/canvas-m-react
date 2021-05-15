@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useReducer, useState } from 'react';
-import { PathSnapPoint, baseNodeDimensions, HORIZONTAL_SCALE } from './util.js';
+import { PathSnapPoint, baseNodeDimensions, HORIZONTAL_SCALE, parseObjectPropToInt } from './util.js';
 import { Node, Path } from './graph.js';
 import Helper from './helper.js'
 import HorizontalScale from './HorizontalScale.js';
@@ -111,6 +111,7 @@ const CanvasM = props => {
 	const dragNode = useRef(-1);
 	const isDrawingPath = useRef(false);
 	const pathId = useRef(-1);
+	const nodeToExpand = useRef(-1);
 
 	const [svgContent, dispatch] = useReducer(reducer, {
 		nodes: {},
@@ -147,6 +148,10 @@ const CanvasM = props => {
 				endDragNode(e);
 				return;
 			}
+			else if (nodeToExpand.current !== -1) {
+				endNodeExpansion(e);
+				return;
+			}
 
 			// create a new node
 			const node = createNewNode({x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
@@ -164,7 +169,13 @@ const CanvasM = props => {
 
 		// starting to drag the node
 		if (e.button === 0 && isDrawingPath.current === false) {
-			startDargNode(e);
+			console.log("offset", getMouseOffset(e));
+			if (overNodeExpansionPoints(elementNodeToBaseNode(e.target), getMouseOffset(e))) {
+				startNodeExpansion(e);
+			}
+			else {
+				startDragNode(e);
+			}
 			return;
 		}
 
@@ -185,6 +196,9 @@ const CanvasM = props => {
 	const mainCanvasMouseMoveH = e => {
 		if (isDraggingNode.current === true) {
 			dragNode_(e);
+		}
+		else if (nodeToExpand.current !== -1) {
+			expandNode(nodeToExpand.current, {x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY});
 		}
 		else if (isDrawingPath.current === true) {
 			drawPath(e);
@@ -259,9 +273,9 @@ const CanvasM = props => {
 		setInfo(() => message);
 	}
 
-	// NODE EVENT FUNCTIONS
+	// NODE DRAG EVENT FUNCTIONS
 
-	const startDargNode = mouseEvent => {
+	const startDragNode = mouseEvent => {
 		cancelDrawPath("Cannot draw path, attempting to drag node!");
 		dragNode.current = mouseEvent.target.getAttribute("id");
 		isDraggingNode.current = true;
@@ -311,6 +325,56 @@ const CanvasM = props => {
 		dragNode.current = -1;
 		isDraggingNode.current = false;
 		setInfo(() => message);
+	}
+
+	// NODE EXTEND EVENT FUNCTIONS
+
+	const overNodeExpansionPoints = (node, mousePos) => {
+		const q = parseInt(node.width) / 8;
+		const l1 = parseInt(node.x);
+		const r1 = parseInt(node.x) + q;
+		const l2 = parseInt(node.x) + parseInt(node.width) - q;
+		const r2 = parseInt(node.x) + parseInt(node.width);
+		console.log(l1, mousePos.x, r1);
+		if ((mousePos.x >= l1 && mousePos.x <= r1) || (mousePos.x >= l2 && mousePos.x <= r2)) {
+			return true;
+		}
+
+		return false;
+	}
+
+	const startNodeExpansion = e => {
+		cancelDragNode(dragNode.current, "Expanding node...");
+		cancelDrawPath("Expanding node...");
+		nodeToExpand.current = e.target.getAttribute("id");
+	}
+
+	const expandNode = (id, mousePos) => {
+		const gridPos = canvasCoordToGrid(mousePos);
+		
+		// if the mouse position is outside canvas then canvasCoordToGrid can return null
+		if (gridPos == null)
+			return;
+		const rightEndPos = gridCoordToCanvas(gridPos);
+		const updatedNode = {
+			...svgContent.nodes[id]
+		};
+		if (rightEndPos.x <= updatedNode.props.x)
+			return;
+
+		const nodeGridPos = canvasCoordToGrid({x: updatedNode.props.x, y: updatedNode.props.y});
+		updatedNode.props.width = (gridPos.x - nodeGridPos.x) * nodeDimensions.current.x;
+		dispatch({type: 'updateNode', target: id, update: updatedNode});
+	}
+
+	const endNodeExpansion = e => {
+		useGraph.updateAllNodePaths(nodeToExpand.current);
+		cancelNodeExpand("Cancelled node expand!");
+	}
+
+	const cancelNodeExpand = message => {
+		setInfo(() => message);
+		nodeToExpand.current = -1;
 	}
 
 
@@ -467,13 +531,14 @@ const CanvasM = props => {
 				if (pathInfo.origin == id) {
 					// -- appropriately rename this 'calcControlPoints' function
 					// updatedPath = calcControlPoints(rightSnapPoint, pathD.tail, nodeWidth);
-					updatedPath = Helper.path.determineControlPoints({ head: rightSnapPoint, tail: pathD.tail }, nodeWidth);
-	
+					// updatedPath = Helper.path.determineControlPoints({ head: rightSnapPoint, tail: pathD.tail }, nodeWidth);
+					updatedPath = Helper.path.determineControlPoints__(parseObjectPropToInt(node), parseObjectPropToInt(svgContent.nodes[pathInfo.end].props));
 				}
 				else {
-					updatedPath = Helper.path.determineControlPoints({ head: pathD.head, tail: leftSnapPoint }, nodeWidth);
+					updatedPath = Helper.path.determineControlPoints__(parseObjectPropToInt(svgContent.nodes[pathInfo.origin].props), parseObjectPropToInt(node));
+					// updatedPath = Helper.path.determineControlPoints({ head: pathD.head, tail: leftSnapPoint }, nodeWidth);
 				}
-	
+
 				// update the "d" attribuite of the Path
 				// -- update the "d" property of path in state
 				dispatch({ type: "updatePathProps", target: pathId, update: { d: Helper.path.parseToString(updatedPath) }});
@@ -539,6 +604,7 @@ const CanvasM = props => {
 	const deserialize = (data, targetUnit) => {
 		var localSVGContent = {nodes: {}, paths: {}};
 		IDCOUNTER.current = data.IDCOUNTER;
+		const currentUnit = unit_;
 		setUnit_(() => targetUnit);
 		// unit.current = targetUnit;
 		grid.current = data.grid;
@@ -561,6 +627,8 @@ const CanvasM = props => {
 		// finally redraw the svgcontent
 		Object.values(data.svgContent.nodes).map(node => {
 			const updatedNode = updateSVGRectCoordinates(node, data.startDate);
+			const updatedWidthNode = updateSVGRectWidth(node, currentUnit, targetUnit);
+			updatedNode.props.width = updatedWidthNode.props.width;
 			// console.log("updated", updatedNode)
 			localSVGContent.nodes[updatedNode.id] = updatedNode;
 		});
@@ -595,6 +663,19 @@ const CanvasM = props => {
 		dispatch({ type: 'replace', replace: localSVGContent });
 	}
 
+	const elementNodeToBaseNode = nodeElement => {
+		console.log("tagName: ", nodeElement.getAttribute("tagName"));
+		if (nodeElement.tagName !== 'rect')
+			return null;
+
+		return {
+			x: nodeElement.getAttribute("x"),
+			y: nodeElement.getAttribute("y"), 
+			height: nodeElement.getAttribute("height"), 
+			width: nodeElement.getAttribute("width")
+		};
+	}
+
 	const updateSVGRectCoordinates = (node, startDate) => {
 		const x = differenceInDays(node.startDate, startDate);
 		const updated = { ...node, props: {...node.props}};
@@ -605,6 +686,24 @@ const CanvasM = props => {
 		updated.props.height = nodeDimensions.current.y;
 
 		return updated;
+	}
+
+	const updateSVGRectWidth = (node, currentUnit, targetUnit) => {
+		const currentUnitNodeWidth = HORIZONTAL_SCALE[currentUnit].relativeNodeWidth * baseNodeDimensions.width;
+		const targetUnitNodeWidth = HORIZONTAL_SCALE[targetUnit].relativeNodeWidth * baseNodeDimensions.width;
+
+		// scale the width of the node accordingly
+		const w = node.props.width / currentUnitNodeWidth;
+		node.props.width = w * targetUnitNodeWidth;
+
+		return node;
+	}
+
+	const getMouseOffset = e => {
+		return {
+			x: e.nativeEvent.offsetX,
+			y: e.nativeEvent.offsetY
+		}
 	}
 
 	const calculateNodeDimensions = unit => {

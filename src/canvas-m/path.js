@@ -29,6 +29,28 @@ const determineControlPoints_ = (head, tail, startNode, endNode) => {
 	}
 }
 
+/**
+ * 
+ @param {Object} startNode
+ @param {Object} endNode
+*/
+const determineControlPoints__ = (startNode, endNode) => {
+	const cMin = 25;
+	const cMax = 75;
+	return {
+		head: determineNodeSnapPoint_(startNode, PathSnapPoint.RIGHT),
+		tail: determineNodeSnapPoint_(endNode, PathSnapPoint.LEFT),
+		c1: {
+			x: startNode.x + startNode.width + clampControlPointsX(startNode.width, cMin, cMax),
+			y: startNode.y + (startNode.height / 2)
+		},
+		c2: {
+			x: endNode.x - clampControlPointsX(endNode.width, cMin, cMax),
+			y: endNode.y + (endNode.height / 2)
+		}
+	}
+}
+
 const parseToObject = (path) => {
 	// parse d to string
 	// split on space
@@ -112,39 +134,8 @@ const compute_ = (startNode, endNode) => {
 	return parseToString(determineControlPoints_(pathHead, pathTail, startNode, endNode));
 }
 
-function determineNodeSnapPoint(node, pathSnapPoint) {
-	var tail = { x: 0, y: 0 };
-
-	if (pathSnapPoint == PathSnapPoint.RIGHT) {
-		tail.x += node.width;
-		tail.y += node.height / 2;
-	}
-	else if (pathSnapPoint == PathSnapPoint.LEFT) {
-		tail.y += node.height / 2;
-	}
-	else if (pathSnapPoint == PathSnapPoint.TOP) {
-		tail.x += node.width / 2;
-	}
-	else if (pathSnapPoint == PathSnapPoint.BOTTOM) {
-		tail.x += node.width / 2;
-		tail.y += node.height;
-	}
-
-	tail.x += node.x;
-	tail.y += node.y;
-
-	return tail;
-}
-
 function determineNodeSnapPoint_(node, pathSnapPoint) {
 	var snapPos = { x: 0, y: 0 };
-	// // get the x, y attribute of the node
-	// const nodeX =  parseInt(node.props.x);
-	// const nodeY = parseInt(node.getAttribute("y"));
-	// // We will also get the height and width of the node, since the width can be changed at runtime.
-	// const nodeH = parseInt(node.getAttribute("height"));
-	// const nodeW = parseInt(node.getAttribute("width"));
-
 	switch(pathSnapPoint) {
 		case PathSnapPoint.RIGHT:
 			snapPos.x += node.width;
@@ -166,30 +157,15 @@ function determineNodeSnapPoint_(node, pathSnapPoint) {
 	snapPos.y += node.y;
 
 	return snapPos;
+}
 
-	// if (pathSnapPoint == PathSnapPoint.RIGHT) {
-	// 	tail.x += nodeW;
-	// 	tail.y += nodeH / 2;
-	// }
-	// else if (pathSnapPoint == PathSnapPoint.LEFT) {
-	// 	tail.y += nodeH / 2;
-	// }
-	// else if (pathSnapPoint == PathSnapPoint.TOP) {
-	// 	tail.x += nodeW / 2;
-	// }
-	// else if (pathSnapPoint == PathSnapPoint.BOTTOM) {
-	// 	tail.x += nodeW / 2;
-	// 	tail.y += nodeH;
-	// }
-
-	// tail.x += nodeX;
-	// tail.y += nodeY;
-
-	// return tail;
+const clampControlPointsX = (x, min, max) => {
+	return Math.min(max, Math.max(x, min));
 }
 
 export {
 	determineControlPoints,
+	determineControlPoints__,
 	parseToObject,
 	parseToString,
 	compute,
