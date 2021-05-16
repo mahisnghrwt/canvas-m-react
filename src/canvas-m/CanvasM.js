@@ -6,17 +6,19 @@ import HorizontalScale from './HorizontalScale.js';
 import { add, differenceInDays } from 'date-fns';
 
 const reducer = (state, action) => {
+	var newState = {};
 	switch(action.type) {
 		case 'addNewNode':
-			return {
+			newState = {
 				paths: state.paths,
 				nodes: {
 					...state.nodes,
 					[action.node.id]: action.node
 				}
 			}
+			break;
 		case 'updateNode':
-			return {
+			newState = {
 				paths: state.paths,
 				nodes: {
 					...state.nodes,
@@ -30,8 +32,9 @@ const reducer = (state, action) => {
 					}
 				}
 			}
+			break;
 		case 'updateNodeProps':
-			return {
+			newState = {
 				paths: state.paths,
 				nodes: {
 					...state.nodes,
@@ -44,8 +47,9 @@ const reducer = (state, action) => {
 					}
 				}
 			}
+			break;
 		case 'addNewPath':
-			return {
+			newState = {
 				nodes: state.nodes,
 				paths: {
 					...state.paths,
@@ -54,8 +58,9 @@ const reducer = (state, action) => {
 					}
 				}
 			}
+			break;
 		case 'updatePath':
-			return {
+			newState = {
 				nodes: state.nodes,
 				paths: {
 					...state.paths,
@@ -65,8 +70,9 @@ const reducer = (state, action) => {
 					}
 				}
 			}
+			break;
 		case 'updatePathProps':
-			return {
+			newState = {
 				nodes: state.nodes,
 				paths: {
 					...state.paths,
@@ -79,9 +85,13 @@ const reducer = (state, action) => {
 					}
 				}
 			}
+			break;
 		case 'replace':
-			return action.replace
+			newState = action.replace
+			break;
 	}
+
+	return newState;
 }
 
 const gridlinesReducer = (state, action) => {
@@ -99,7 +109,6 @@ const CanvasM = props => {
 	const IDCOUNTER = useRef(0);
 	const startDate = useRef(new Date());
 	const halfYear = 180;
-	const unit = useRef("MONTH");
 	const [unit_, setUnit_] = useState("MONTH");
 	const nodeDimensions = useRef({ x: 20 * HORIZONTAL_SCALE[unit_].relativeNodeWidth, y: 25});
 	const grid = useRef({ x: halfYear, y: 1 });
@@ -112,6 +121,9 @@ const CanvasM = props => {
 	const isDrawingPath = useRef(false);
 	const pathId = useRef(-1);
 	const nodeToExpand = useRef(-1);
+	const intermediateStateRef = useRef(null);
+
+	const rows = useRef({});
 
 	const [svgContent, dispatch] = useReducer(reducer, {
 		nodes: {},
@@ -122,7 +134,6 @@ const CanvasM = props => {
 		nodes: {},
 		paths: {}
 	})
-
 
 	const [gridlines, dispatchForGridlines] = useReducer(gridlinesReducer, {
 		horizontal: [],
@@ -155,6 +166,10 @@ const CanvasM = props => {
 
 			// create a new node
 			const node = createNewNode({x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
+			if (node == null) {
+				setInfo(() => "A row can only contain a single node!");
+				return;
+			}
 			// add new node to the graph
 			useGraph.addNode(node.id);
 
@@ -202,6 +217,61 @@ const CanvasM = props => {
 		}
 		else if (isDrawingPath.current === true) {
 			drawPath(e);
+		}
+	}
+
+	// Intermediate state functions
+
+	const initializeIntermediateState = () => {
+		intermediateStateRef.current = JSON.parse(JSON.stringify(svgContent));
+	}
+
+	const dispatchIntermediateState = () => {
+		const action = {type: 'replace', replace: intermediateStateRef.current};
+		dispatch(action);
+	}
+
+	const intermediateStateReducer = action => {
+		switch (action.type) {
+			case 'updateNode':
+			intermediateStateRef.current = {
+				paths: intermediateStateRef.current.paths,
+				nodes: {
+					...intermediateStateRef.current.nodes,
+					[action.target]: {
+						...intermediateStateRef.current.nodes[action.target],
+						...action.update,
+						props: {
+							...intermediateStateRef.current.nodes[action.target].props,
+							...action.update.props
+						}
+					}
+				}
+			}
+			break;
+			case 'deleteNode':
+				delete intermediateStateRef.current.nodes[action.target];
+			break;
+			case 'updatePathProps':
+			intermediateStateRef.current = {
+				nodes: intermediateStateRef.current.nodes,
+				paths: {
+					...intermediateStateRef.current.paths,
+					[action.target]: {
+						...intermediateStateRef.current.paths[action.target],
+						props: {
+							...intermediateStateRef.current.paths[action.target].props,
+							...action.update
+						}
+					}
+				}
+			}
+			break;
+			case 'deletePath':
+				delete intermediateStateRef.current.paths[action.target];
+			break;
+			default:
+				throw new Error(`Action ${action.type} not supported!`);
 		}
 	}
 
@@ -285,37 +355,28 @@ const CanvasM = props => {
 		if (isDraggingNode.current === false || dragNode.current === -1)
 			return;
 
-		const gridPos = canvasCoordToGrid({ x: mouseEvent.nativeEvent.offsetX, y: mouseEvent.nativeEvent.offsetY });
-		if (gridPos == null) {
+		const options = {
+			isGridPos: false,
+			updateY: false,
+			updatePath: true
+		}
+
+		// will make the deep clone of the state(svgContent)
+		initializeIntermediateState();
+		
+		if (moveNodeTo(dragNode.current, { x: mouseEvent.nativeEvent.offsetX, y: mouseEvent.nativeEvent.offsetY }, options) == null) {
 			cancelDragNode(dragNode.current, "Trying to drag out of canvas!");
-			useGraph.updateAllNodePaths(dragNode.current);
-			return;
 		}
-		if (gridPos.x === svgContent.nodes[dragNode.current].props.x && gridPos.y === svgContent.nodes[dragNode.current].props.y)
-			return;
-		const updatedStartDate = add(startDate.current, { days: parseInt(gridPos.x) });
-		const pos = gridCoordToCanvas(gridPos);
-		const action = {
-			type: 'updateNode',
-		 	target: dragNode.current,
-			update: {
-				startDate: updatedStartDate,
-				props: {
-					x: pos.x,
-					y: pos.y
-				}
-			}
-		}
-		dispatch(action);
+
+		// finally update the state with updated node and path, in a single render!!
+		dispatchIntermediateState();
 	}
 
-	const endDragNode = mouseEvent => {
+	const endDragNode = () => {
 		if (isDraggingNode.current === false)
 			return;
 
-		useGraph.updateAllNodePaths(dragNode.current);
-		isDraggingNode.current = false;
-		dragNode.current = -1;
+		cancelDragNode(dragNode.current, "Cancelling node drag event!");
 	}
 
 	const cancelDragNode = (id, message) => {
@@ -381,10 +442,12 @@ const CanvasM = props => {
 	// ### SOME USEFUL FUNCTIONS
 
 	const createNewNode = (coordinates) => {
-		const id = IDCOUNTER.current++;
 		const gridCoord = canvasCoordToGrid(coordinates);
+		if (rows.current[gridCoord.y] != undefined)
+			return null;
+		const id = IDCOUNTER.current++;
+		rows.current[gridCoord.y] = id;
 		const snappedCoord = gridCoordToCanvas(gridCoord);
-	
 		return {
 			id: id,
 			startDate: add(startDate.current, { days: gridCoord.x }),
@@ -396,10 +459,7 @@ const CanvasM = props => {
 				x: snappedCoord.x,
 				y: snappedCoord.y
 			}
-		}
-
-		// Add new node to the graph
-		// --Graph.addNode(id);
+		};
 	};
 
 	const createNewPath = (node) => {
@@ -421,8 +481,26 @@ const CanvasM = props => {
 		// Graph.addPathToNode(node.getAttribute("id"), id);
 	}
 
-	// COORDINATE RELATED FUNCTIONS
+	const stateNodeToBaseNode_ = (id, fromIntermediate) => {
+		if (fromIntermediate === true) {
+			return {
+				x: intermediateStateRef.current.nodes[id].props.x,
+				y: intermediateStateRef.current.nodes[id].props.y,
+				height: intermediateStateRef.current.nodes[id].props.height,
+				width: intermediateStateRef.current.nodes[id].props.width,
+			}
+		}
+		else {
+			return {
+				x: svgContent.nodes[id].props.x,
+				y: svgContent.nodes[id].props.y,
+				height: svgContent.nodes[id].props.height,
+				width: svgContent.nodes[id].props.width,
+			}
+		}
+	}
 
+	// COORDINATE RELATED FUNCTIONS
 	
 	const canvasCoordToGrid = coordinates => {
 		// coord represent the posittion on grid
@@ -486,15 +564,8 @@ const CanvasM = props => {
 		updateAllNodePaths: id => {
 			if (id === -1) return;
 
-			// get the id of target node
-			const nodeWidth = svgContent.nodes[id].props.width;
-
-			const extractNode = () => {
-				const {props: {x, y, height, width}} = svgContent.nodes[id];
-				return {x, y, height, width};
-			}
-
-			const node = extractNode(id);
+			const node = stateNodeToBaseNode_(id, true);
+			console.log("node ", node);
 		
 			// returns {id: nodeId, paths: { [pathId]: 1}}
 			// -- we are already storing the information in the JSObj, soo, we dont necessarily need another class to store this information, :P kill this source of redundancy
@@ -503,12 +574,10 @@ const CanvasM = props => {
 			// -- but create "reducer" like functions for help!
 			const nodeInfo = useGraph.getNodeInfo(id);
 			if (nodeInfo == null || nodeInfo == undefined) return;
-		
-			// where to latch the path on this node
-			// -- can we rename this to something better??
-			const leftSnapPoint = Helper.path.determineNodeSnapPoint_(node, PathSnapPoint.LEFT);
-			const rightSnapPoint = Helper.path.determineNodeSnapPoint_(node, PathSnapPoint.RIGHT);
-		
+
+			console.log("paths", nodeInfo.paths);
+
+			
 			// for every single path latched to this node
 			for (const pathId of nodeInfo.paths) {
 				// returns path obj, {id: number, origin: number, end: number}
@@ -521,31 +590,154 @@ const CanvasM = props => {
 				// const path = document.getElementById(pathId);
 		
 				// parse the path.d string to obj
-				const pathD = Helper.path.parseToObject(svgContent.paths[pathId].props.d);
+				// const pathD = Helper.path.parseToObject(svgContent.paths[pathId].props.d);
 				var updatedPath = null;
 		
 				// if the current node is the origin of path
 				//    then we latch the path to the right side of the node
 				// else
 				//      latch to the left side of the node
+
 				if (pathInfo.origin == id) {
 					// -- appropriately rename this 'calcControlPoints' function
 					// updatedPath = calcControlPoints(rightSnapPoint, pathD.tail, nodeWidth);
 					// updatedPath = Helper.path.determineControlPoints({ head: rightSnapPoint, tail: pathD.tail }, nodeWidth);
-					updatedPath = Helper.path.determineControlPoints__(parseObjectPropToInt(node), parseObjectPropToInt(svgContent.nodes[pathInfo.end].props));
+					const otherNode = stateNodeToBaseNode_(pathInfo.end, true);
+					updatedPath = Helper.path.determineControlPoints__(parseObjectPropToInt(node), parseObjectPropToInt(otherNode));
 				}
 				else {
-					updatedPath = Helper.path.determineControlPoints__(parseObjectPropToInt(svgContent.nodes[pathInfo.origin].props), parseObjectPropToInt(node));
+					const otherNode = stateNodeToBaseNode_(pathInfo.origin, true);
+					updatedPath = Helper.path.determineControlPoints__(parseObjectPropToInt(otherNode), parseObjectPropToInt(node));
 					// updatedPath = Helper.path.determineControlPoints({ head: pathD.head, tail: leftSnapPoint }, nodeWidth);
 				}
 
 				// update the "d" attribuite of the Path
 				// -- update the "d" property of path in state
-				dispatch({ type: "updatePathProps", target: pathId, update: { d: Helper.path.parseToString(updatedPath) }});
+				intermediateStateReducer({ type: "updatePathProps", target: pathId, update: { d: Helper.path.parseToString(updatedPath) }});
 				// path.setAttribute("d", parsePathDToStr(updatedPath));
 			}
 		}
 	};
+
+	/**
+	 * @param {number | string} nodeId - id of node to move
+	 * @param {*} pos - Position {x, y} on grid to move node to.
+	 * @param {*} options - Mandatory :>
+	 * @param {boolean} options.isGridPos - Is the position grid based or canvas based
+	 * @param {boolean} options.updateY - Should we updated y?
+	 * @param {boolean} options.updatePath - update paths attached to this node?
+	 */
+	const moveNodeTo = (nodeId, pos, options) => {
+		var gridPos = {};
+		if (options.isGridPos === false)
+			gridPos = canvasCoordToGrid(pos);
+		else
+			gridPos = {...pos};
+
+
+		if (gridPos == null) {
+			useGraph.updateAllNodePaths(nodeId);
+			return null;
+		}
+
+		// Nothing to update if the target position is on the same block as current
+		if (gridPos.x === svgContent.nodes[nodeId].props.x && gridPos.y === svgContent.nodes[nodeId].props.y)
+			return;
+		
+		const updatedStartDate = add(startDate.current, { days: parseInt(gridPos.x) });
+		const pos_ = gridCoordToCanvas(gridPos);
+		const action = {
+			type: 'updateNode',
+			target: nodeId,
+			update: {
+				startDate: updatedStartDate,
+				props: {
+					x: pos_.x
+				}
+			}
+		}
+
+		if (options.updateY === true) {
+			action.update.props.y = pos_.y;
+		}
+
+		intermediateStateReducer(action);
+
+		// // push the node id to nodePathQ, it will udpate the path for use after node has been updated
+		// nodePathQ.current.push(nodeId);
+
+		if (options.updatePath)
+			useGraph.updateAllNodePaths(nodeId);
+
+		return true;
+	}
+
+	/**
+	 * 
+	 * @param {number} id Node to delete
+	 * @param {Object} options 
+	 * @param {boolean} options.handleIntermediateState If true, it will initialize and dispatch intermediate state
+	 */
+	const deleteNode = (id, options) => {
+		if (options.handleIntermediateState)
+			initializeIntermediateState();
+		
+		// delete all the paths node has connection to (graph, and state)
+		for (const p of graph.current.nodes[id].paths) {
+			deletePath(p);
+		}
+
+		// delete the node from the graph
+		delete graph.current.nodes[id];
+
+		// clear the current row
+		verySlowclearNodeFromRow(id);
+
+		// delete the node from the state
+		const action = {type: 'deleteNode', target: id};
+		intermediateStateReducer(action);
+
+		if (options.handleIntermediateState)
+			dispatchIntermediateState();
+	}
+
+	/**
+	 * 
+	 * @param {number} id - Path id to delete
+	 * @description intermediate state must be initialized before and dispatched after to commit state changes
+	 */
+	const deletePath = id => {
+		// delete from the graph
+		const originNode = graph.current.paths[id].origin;
+		const endNode = graph.current.paths[id].end;
+
+		// delete the reference to path from the graph.nodes
+		graph.current.nodes[originNode].paths.delete(id);
+		graph.current.nodes[endNode].paths.delete(id);
+
+		// delete the graph.paths itself
+		delete graph.current.paths[id];
+
+		// delete path from the state
+		const action = {type: 'deletePath', target: id};
+		intermediateStateReducer(action);
+	}
+
+	/**
+	 * 
+	 * @param {number} id Node to delete from "rows" ref
+	 * @description Very poor implementation, please refactor it in the near future :)
+	 */
+	const verySlowclearNodeFromRow = id => {
+		var i = -1;
+		for (i = 0; i < grid.current.y; i++) {
+			if (rows.current[i] == id)
+				break;
+		}
+
+		if (rows.current[i] != undefined)
+			delete rows.current[i];
+	}
 
 	const drawGridlines = (nodeDimensions, grid) => {
 		var gridlinesM = { horizontal: [], vertical: [] };
@@ -563,6 +755,7 @@ const CanvasM = props => {
 		for (var i = 0; i < grid.y; i++) {
 			const y = (i * nodeDimensions.y);
 			const x = 0;
+			console.log("i", i);
 			gridLabels.current.push(<div className="row-label" style={{height: nodeDimensions.y, position: "relative", top: nodeDimensions.y / 2}}>{`Row ${i}`}</div>)
 		}
 
@@ -584,6 +777,59 @@ const CanvasM = props => {
 			}
 		})
 		drawGridlines(nodeDimensions.current, grid.current);
+	}
+
+	/**
+	 * 
+	 * @param {number} row Index of row to delete
+	 * @description Handles intermediates state
+	 */
+	const deleteRow = row => {
+		initializeIntermediateState();
+
+		row = parseInt(row);
+		if (row < 0)
+			return;
+
+		// delete the node in the current row if any
+		if (rows.current[row] != undefined) {
+			deleteNode(rows.current[row], {handleIntermediateState: false});
+		}
+		
+		for(var i = row + 1; i < grid.current.y; i++) {
+			// shift node from this row to the one above
+			const nodeId = rows.current[i];
+
+			if (nodeId === undefined)
+				continue;
+
+			// pathUpdateNodes.push(nodeId);
+
+			// update the rows, for the node that lies onto it
+			rows.current[i - 1] = nodeId;
+			rows.current[i] = undefined;
+
+			// const target pos
+			const x = intermediateStateRef.current.nodes[nodeId].props.x;
+			const y = intermediateStateRef.current.nodes[nodeId].props.y;
+
+			// convert to grid based
+			const gridBasedPos = canvasCoordToGrid({x, y});
+
+			// decrement the row
+			gridBasedPos.y -= 1;
+
+			// update the gridlabel as well
+			gridLabels.current[i - 1] = gridLabels.current[i];
+
+			// move the node
+			const r = moveNodeTo(nodeId, gridBasedPos, {isGridPos: true, updateY: true, updatePath: true});
+		}
+
+		// decrement the vertical grid size by 1
+		updateGridSize(-1);
+
+		dispatchIntermediateState();
 	}
 
 	// Serialize
@@ -664,7 +910,6 @@ const CanvasM = props => {
 	}
 
 	const elementNodeToBaseNode = nodeElement => {
-		console.log("tagName: ", nodeElement.getAttribute("tagName"));
 		if (nodeElement.tagName !== 'rect')
 			return null;
 
@@ -728,6 +973,37 @@ const CanvasM = props => {
 		});
 	}
 
+	const deleteRow_ = id => {
+		deleteRow(id);
+		// updateNodes.map(x => console.log("~", svgContent.nodes[x]));
+		// updateNodes.map(x => useGraph.updateAllNodePaths(x));
+	}
+
+	const DeleteDebugComponent = ({deleteRow__, deleteNode__, deletePath__}) => {
+		const [state, setState] = useState("");
+		return (
+			<>
+				<span>Delete row: </span>
+				<input type="number" onChange={e => setState(e.target.value)} value={state}></input>
+				<button onClick={() => {
+					deleteRow__(state);
+				}}>
+					Delete Row
+				</button>
+				<button onClick={() => {
+					deletePath__(state);
+				}}>
+					Delete Path
+				</button>
+				<button onClick={() => {
+					deleteNode__(state, {handleIntermediateState: true});
+				}}>
+					Delete Node
+				</button>
+			</>
+		)
+	}
+
 	return (
 		<>
 		<h3>{ unit_ }</h3>
@@ -739,6 +1015,7 @@ const CanvasM = props => {
 				<button onClick={() => {updateScale("WEEK")}}>Week</button>
 				<button onClick={() => {updateScale("MONTH")}}>Month</button>
 				<button onClick={() => {updateScale("QUARTER")}}>Quarter</button>
+				<DeleteDebugComponent deleteRow__={deleteRow_} deleteNode__={deleteNode} deletePath__={deletePath} />
 			</div>
 			<div className="canvas-wrapper" style={{height: "480px"}}>	
 				<HorizontalScale

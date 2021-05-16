@@ -35,7 +35,9 @@ const determineControlPoints_ = (head, tail, startNode, endNode) => {
  @param {Object} endNode
 */
 const determineControlPoints__ = (startNode, endNode) => {
-	const cMin = 25;
+	// Actually the control point is dependent on the height of the node, instead of its width.
+	
+	const cMin = 50;
 	const cMax = 75;
 	return {
 		head: determineNodeSnapPoint_(startNode, PathSnapPoint.RIGHT),
