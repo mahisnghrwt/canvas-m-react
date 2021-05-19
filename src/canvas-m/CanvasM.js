@@ -3,7 +3,8 @@ import { PathSnapPoint, baseNodeDimensions, HORIZONTAL_SCALE, parseObjectPropToI
 import { Node, Path } from './graph.js';
 import Helper from './helper.js'
 import HorizontalScale from './HorizontalScale.js';
-import { add, differenceInDays } from 'date-fns';
+import { add, differenceInDays, getOverlappingDaysInIntervals } from 'date-fns';
+
 
 const reducer = (state, action) => {
 	var newState = {};
@@ -184,7 +185,6 @@ const CanvasM = props => {
 
 		// starting to drag the node
 		if (e.button === 0 && isDrawingPath.current === false) {
-			console.log("offset", getMouseOffset(e));
 			if (overNodeExpansionPoints(elementNodeToBaseNode(e.target), getMouseOffset(e))) {
 				startNodeExpansion(e);
 			}
@@ -307,7 +307,6 @@ const CanvasM = props => {
 		// means the path is ending over this node
 		// snap to the desired position
 		// -- get the path object from svgContent state
-		console.log("path id", pathId.current);
 		// -- get its d attribute
 		const d = svgContent.paths[pathId.current].props.d;
 		// parse string d to obj
@@ -324,8 +323,6 @@ const CanvasM = props => {
 		var endPoint = Helper.path.determineNodeSnapPoint_(node, PathSnapPoint.LEFT)
 		// -- this needs to be fixed
 		// -- Graph.addPathToNode(e.target.getAttribute("id"), pathId);
-
-		// -- console.log(Graph.graph);
 		// -- update the endpoint of path, in the d object
 		dObj.tail.x = endPoint.x;
 		dObj.tail.y = endPoint.y;
@@ -396,7 +393,6 @@ const CanvasM = props => {
 		const r1 = parseInt(node.x) + q;
 		const l2 = parseInt(node.x) + parseInt(node.width) - q;
 		const r2 = parseInt(node.x) + parseInt(node.width);
-		console.log(l1, mousePos.x, r1);
 		if ((mousePos.x >= l1 && mousePos.x <= r1) || (mousePos.x >= l2 && mousePos.x <= r2)) {
 			return true;
 		}
@@ -411,6 +407,8 @@ const CanvasM = props => {
 	}
 
 	const expandNode = (id, mousePos) => {
+		initializeIntermediateState();
+
 		const gridPos = canvasCoordToGrid(mousePos);
 		
 		// if the mouse position is outside canvas then canvasCoordToGrid can return null
@@ -418,19 +416,32 @@ const CanvasM = props => {
 			return;
 		const rightEndPos = gridCoordToCanvas(gridPos);
 		const updatedNode = {
-			...svgContent.nodes[id]
+			...intermediateStateRef.current.nodes[id],
+			props: {
+				...intermediateStateRef.current.nodes[id].props
+			}
 		};
 		if (rightEndPos.x <= updatedNode.props.x)
 			return;
 
 		const nodeGridPos = canvasCoordToGrid({x: updatedNode.props.x, y: updatedNode.props.y});
 		updatedNode.props.width = (gridPos.x - nodeGridPos.x) * nodeDimensions.current.x;
-		dispatch({type: 'updateNode', target: id, update: updatedNode});
+
+		// update the end date of the node
+		updatedNode.endDate = add(new Date(updatedNode.startDate), { days: parseInt(updatedNode.props.width) / parseInt(nodeDimensions.current.x)});
+
+		intermediateStateReducer({type: 'updateNode', target: id, update: updatedNode});
+
+		dispatchIntermediateState();
 	}
 
 	const endNodeExpansion = e => {
+		initializeIntermediateState();
+
 		useGraph.updateAllNodePaths(nodeToExpand.current);
 		cancelNodeExpand("Cancelled node expand!");
+
+		dispatchIntermediateState();
 	}
 
 	const cancelNodeExpand = message => {
@@ -441,16 +452,29 @@ const CanvasM = props => {
 
 	// ### SOME USEFUL FUNCTIONS
 
+	/**
+	 * 
+	 * @param {{x: number, y: number}} coordinates Position where to initialize the node, relative to canvas.
+	 * @returns {undefined|Object} node
+	 * @description Takes in the coordiantes where to place the new node, returns the node object that can be placed into "svgContent". node.props contains all the attributes to draw SVG.
+	 */
 	const createNewNode = (coordinates) => {
+		// convert the corrdinates to grid based
 		const gridCoord = canvasCoordToGrid(coordinates);
+		// Return null if the row is already occupied by another node
 		if (rows.current[gridCoord.y] != undefined)
 			return null;
+		// get an id	
 		const id = IDCOUNTER.current++;
+		// mark the targetted row now as occupied by this node
 		rows.current[gridCoord.y] = id;
+		// Get the coordiantes on canvas to place this node
 		const snappedCoord = gridCoordToCanvas(gridCoord);
+
 		return {
 			id: id,
 			startDate: add(startDate.current, { days: gridCoord.x }),
+			endDate: add(startDate.current, { days: gridCoord.x + 1}),
 			props: {
 				className: "rect",
 				id: id,
@@ -554,7 +578,6 @@ const CanvasM = props => {
 
 			if (graph.current.paths[pathId].addNode(nodeId) === false) {
 				// do something
-				console.log(graph.current.paths[pathId]);
 				throw new Error("no free end for this path!");
 			}
 		},
@@ -565,8 +588,6 @@ const CanvasM = props => {
 			if (id === -1) return;
 
 			const node = stateNodeToBaseNode_(id, true);
-			console.log("node ", node);
-		
 			// returns {id: nodeId, paths: { [pathId]: 1}}
 			// -- we are already storing the information in the JSObj, soo, we dont necessarily need another class to store this information, :P kill this source of redundancy
 			// -- instead store the information in the stateonly
@@ -574,9 +595,6 @@ const CanvasM = props => {
 			// -- but create "reducer" like functions for help!
 			const nodeInfo = useGraph.getNodeInfo(id);
 			if (nodeInfo == null || nodeInfo == undefined) return;
-
-			console.log("paths", nodeInfo.paths);
-
 			
 			// for every single path latched to this node
 			for (const pathId of nodeInfo.paths) {
@@ -616,8 +634,237 @@ const CanvasM = props => {
 				intermediateStateReducer({ type: "updatePathProps", target: pathId, update: { d: Helper.path.parseToString(updatedPath) }});
 				// path.setAttribute("d", parsePathDToStr(updatedPath));
 			}
+		},
+		scanDependencies: () => {
+			// possible status of the nodes
+			const status = {
+				CLEAR: "CLEAR",
+				BLOCKED: "BLOCKED",
+				PARTIALLY_BLOCKED: "PARTIALLY_BLOCKED"
+			}
+
+			// returns the worse condition among two dependecy status
+			const getWorseStatus = (l, r) => {
+				if (l == undefined && r == undefined) return null;
+				if (l == undefined) return r;
+				if (r == undefined) return l;
+
+				switch(r) {
+					case status.BLOCKED: 
+						return status.BLOCKED;
+					case status.PARTIALLY_BLOCKED:
+						return l === status.BLOCKED ? status.BLOCKED : status.PARTIALLY_BLOCKED;
+					case status.CLEAR:
+						return l === status.CLEAR ? status.CLEAR : l;
+					default:
+						throw new Error(`Unexpcted dependency status ${r}`);
+				}
+			}
+
+
+			/**
+			 * 
+			 * @param {number} dependee 
+			 * @param {number} dependant 
+			 * @returns [dependee->dependant] 
+			 */
+			const createPathString = (dependee, dependant) => {
+				return `${dependee}->${dependant}`;
+			}
+
+			/**
+			 * 
+			 * @param {number} id_ dependant 
+			 * @param {Set} visitedPaths :) 
+			 * @returns  returns unvisited dependee
+			 */
+			const getUnvisitedDependee = (id_, visitedPaths) => {
+				for (const pathId of graph.current.nodes[id_].paths) {
+					// child is considered only if the path.end === id_
+					if (graph.current.paths[pathId].end === id_) {
+						// this is a valid child in our defination
+						// the node with id_ is dependent on the .origin of the path
+						// if this child is not already visited return its id
+						const dependee = graph.current.paths[pathId].origin;
+						if (visitedPaths.has(createPathString(dependee, id_)) === false) {
+							return dependee;
+						}
+					}
+				}
+
+				return null;
+			}
+
+
+			const determineDelay = (dependee, dependant) => {
+				if (new Date(dependant.startDate) >= new Date(dependee.endDate))
+					return status.CLEAR;
+				if (new Date(dependant.endDate) <= new Date(dependee.endDate))
+					return status.BLOCKED;
+				if (new Date(dependant.endDate) > new Date(dependee.endDate))
+					return status.PARTIALLY_BLOCKED;
+			}
+
+			/**
+			 * 
+			 * @description It has dependant, if event the single path originates from the node
+			 */
+			const hasDependant = n => {
+				for (const p of graph.current.nodes[n].paths) {
+					// for path p of this node
+					if (graph.current.paths[p].origin == n)
+						return true;
+				}
+
+				return false;
+			}
+
+			var dependencies = {};
+			var stack = [];
+			const visitedPaths = new Set();
+			for (const n in graph.current.nodes) {
+				dependencies[n] = {
+					isChecked: false
+				}
+			}
+		/*
+		*****************************************************************************************
+		*****************************************************************************************
+		for node n in nodes
+			hasnt been checked already and has atleast one dependee
+				already checked
+					if has dependant
+						-> then look for dependancy blocks and update the "dependants" value 
+						-> also mark this path as visited dependee->dependant
+					else
+						then just skip it
+				not checked already
+					look for the unvisited dependee (current node -> dependee has been done before)
+						-> if any, push into the stack and one by one
+					else
+						-> all the dependee has already been visited
+						-> then mark this node as checked, since all the dependee has already contributed to the status of this node
+			else
+				if no dependee
+					mark it as clear
+		*****************************************************************************************
+		*****************************************************************************************
+		*/
+			// iterate through all the nodes we have
+			for (const n in graph.current.nodes) {
+				if (hasDependant(n) === false && dependencies[n].isChecked === false) {
+					console.log(`${n} does not have dependant!`);
+					// clear the stack
+					stack.splice(0);
+					// push the current node into the stack
+					stack.push(n);
+
+					while (stack.length !== 0) {
+						const top = stack[stack.length - 1];
+						// if the "top" node has already been checked
+						if (dependencies[top].isChecked === true) {
+							// if checked pop the "top" node from the stack
+							stack.pop();
+
+							// if the stack length is greater than 0, the current top node in the is dependant on the "top" node
+							if (stack.length > 0) {
+								const dependantNode = stack[stack.length - 1];
+
+								// calculate the dependancy between "top" and "cTop" node
+								const dependee = {startDate: svgContent.nodes[top].startDate, endDate: svgContent.nodes[top].endDate};
+								const dependant = {startDate: svgContent.nodes[dependantNode].startDate, endDate: svgContent.nodes[dependantNode].endDate};
+								const delay = determineDelay(dependee, dependant);
+								// set the status for dependant node
+								dependencies[dependantNode].status = getWorseStatus(dependencies[dependantNode].status, getWorseStatus(dependencies[top].status, delay));
+								// mark the path [dependee->dependant] as visited
+								visitedPaths.add(createPathString(top, dependantNode));
+							}
+							else {
+								// do nothing
+							}
+						}
+						else {
+							// get unvisited dependee
+							const dependee = getUnvisitedDependee(top, visitedPaths);
+							if (dependee != null) {
+								// now perform dependancy check on the dependee
+								stack.push(dependee);
+							}
+							else {
+								// no dependee left, so mark this node as checked
+								dependencies[top].isChecked = true;
+								// just in case, this node is a leaf node
+								dependencies[top].status = getWorseStatus(dependencies[top].status, status.CLEAR);
+							}
+						}
+					}
+				}
+			}
+
+			setInfo(dependencies);
 		}
 	};
+
+
+	/*
+		scanDependencies function
+		*** NOTE -- children === dependee ***
+		Q. How do I check if the node n is blocked or not?
+		A. If any node among is children is blocked, then we take the worst case between two.
+			-> if still the node n is anything but "blocked", against every children we look for "block" or "partial block"
+			 	-> we take the worst among all the above cases and set it as the status of node "n"
+
+		----> psuedocode <----
+		dependencyStatus = []
+		for (node n in graph) {
+			// use stack to avoid recursion hell :()
+			if (checked(n) === false) {
+				stack.push(n);
+				
+				// on the loop end we must have the dependency status of the node "n"
+				while(stack.empty() === false) {
+					top = stack.top();
+					// check if the node has already been checked
+					if (checked(top) === true) {
+						stack.pop();
+
+						// if the node n does not have a dependant
+						if (stack.length === 0) {
+							// can the value of dependency status will still be undfined
+							// yes, in case it didnt had any dependee
+							// then, by default we mark its status as CLEAR
+							if (dependencyStatus[top] == undefined) {
+								dependencyStatus[top] = CLEAR;
+							}
+						}
+						else {
+							// if it does have a dependant
+							if (dependncyStatus[top] == undefined) {
+								dependncyStatus[top] = CLEAR;
+							}
+
+							// set the values for the dependant 
+						}
+					}
+				}
+			}
+
+
+			if (checked(n) === false) {
+				if (isDependant(n) === false) {
+					nodeStatus[n] = CLEAR
+				}
+				else {
+					// get the worst state among the children
+					//
+				}
+			}
+		}
+
+		has no dependant, that indicates it has been completely checked
+
+
+	*/
 
 	/**
 	 * @param {number | string} nodeId - id of node to move
@@ -628,6 +875,8 @@ const CanvasM = props => {
 	 * @param {boolean} options.updatePath - update paths attached to this node?
 	 */
 	const moveNodeTo = (nodeId, pos, options) => {
+		const node = intermediateStateRef.current.nodes[nodeId];
+
 		var gridPos = {};
 		if (options.isGridPos === false)
 			gridPos = canvasCoordToGrid(pos);
@@ -643,14 +892,19 @@ const CanvasM = props => {
 		// Nothing to update if the target position is on the same block as current
 		if (gridPos.x === svgContent.nodes[nodeId].props.x && gridPos.y === svgContent.nodes[nodeId].props.y)
 			return;
+
+		// calculate number of days this node expands to
+		const days = node.props.width / nodeDimensions.current.x;
 		
 		const updatedStartDate = add(startDate.current, { days: parseInt(gridPos.x) });
+		const updatedEndDate = add(updatedStartDate, {days: days});
 		const pos_ = gridCoordToCanvas(gridPos);
 		const action = {
 			type: 'updateNode',
 			target: nodeId,
 			update: {
 				startDate: updatedStartDate,
+				endDate: updatedEndDate,
 				props: {
 					x: pos_.x
 				}
@@ -755,7 +1009,6 @@ const CanvasM = props => {
 		for (var i = 0; i < grid.y; i++) {
 			const y = (i * nodeDimensions.y);
 			const x = 0;
-			console.log("i", i);
 			gridLabels.current.push(<div className="row-label" style={{height: nodeDimensions.y, position: "relative", top: nodeDimensions.y / 2}}>{`Row ${i}`}</div>)
 		}
 
@@ -875,7 +1128,6 @@ const CanvasM = props => {
 			const updatedNode = updateSVGRectCoordinates(node, data.startDate);
 			const updatedWidthNode = updateSVGRectWidth(node, currentUnit, targetUnit);
 			updatedNode.props.width = updatedWidthNode.props.width;
-			// console.log("updated", updatedNode)
 			localSVGContent.nodes[updatedNode.id] = updatedNode;
 		});
 
@@ -922,9 +1174,11 @@ const CanvasM = props => {
 	}
 
 	const updateSVGRectCoordinates = (node, startDate) => {
+		// get the grid based x position
 		const x = differenceInDays(node.startDate, startDate);
+		// clone the node
 		const updated = { ...node, props: {...node.props}};
-		// now we have the x in grid coordinates, but y is still in canvas coordinates
+		// now convert that to canvas based coordinates
 		const canvasCoord = gridCoordToCanvas({x: x, y: 0});
 		updated.props.x = canvasCoord.x;
 		updated.props.width = nodeDimensions.current.x;
@@ -975,8 +1229,6 @@ const CanvasM = props => {
 
 	const deleteRow_ = id => {
 		deleteRow(id);
-		// updateNodes.map(x => console.log("~", svgContent.nodes[x]));
-		// updateNodes.map(x => useGraph.updateAllNodePaths(x));
 	}
 
 	const DeleteDebugComponent = ({deleteRow__, deleteNode__, deletePath__}) => {
@@ -1016,6 +1268,7 @@ const CanvasM = props => {
 				<button onClick={() => {updateScale("MONTH")}}>Month</button>
 				<button onClick={() => {updateScale("QUARTER")}}>Quarter</button>
 				<DeleteDebugComponent deleteRow__={deleteRow_} deleteNode__={deleteNode} deletePath__={deletePath} />
+				<button onClick={useGraph.scanDependencies}>Scan Dependencies</button>
 			</div>
 			<div className="canvas-wrapper" style={{height: "480px"}}>	
 				<HorizontalScale
